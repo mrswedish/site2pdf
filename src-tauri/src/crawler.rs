@@ -166,15 +166,31 @@ async fn wait_for_ready(page: &chromiumoxide::Page) {
 }
 
 async fn dismiss_cookie_banners(page: &chromiumoxide::Page) {
-    // Step 1: try to click the most common "accept" buttons.
-    // The list covers Swedish, English and common button labels.
+    // Step 1: try to click accept buttons.
+    // Tries known Cookiebot/OneTrust IDs first, then falls back to text matching.
     let click_script = r#"
         (function() {
+            // --- Cookiebot (used by e.g. folkhalsomyndigheten.se) ---
+            const cybotAccept = document.getElementById(
+                'CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll'
+            );
+            if (cybotAccept) { cybotAccept.click(); return 'cybot-id'; }
+
+            // --- OneTrust ---
+            const otAccept = document.getElementById('onetrust-accept-btn-handler');
+            if (otAccept) { otAccept.click(); return 'onetrust-id'; }
+
+            // --- Generic Cookiebot JS API ---
+            if (typeof Cookiebot !== 'undefined' && Cookiebot.hide) {
+                Cookiebot.hide(); return 'cookiebot-api';
+            }
+
+            // --- Text-based fallback ---
             const keywords = [
-                'acceptera alla', 'acceptera', 'accept all', 'accept cookies',
-                'accept', 'godkänn alla', 'godkänn', 'tillåt alla', 'tillåt',
-                'allow all', 'allow cookies', 'allow', 'agree', 'i agree',
-                'ok', 'got it', 'förstår', 'jag förstår', 'stäng', 'close',
+                'acceptera alla kakor', 'acceptera alla', 'acceptera', 'accept all cookies',
+                'accept all', 'accept cookies', 'accept', 'godkänn alla', 'godkänn',
+                'tillåt alla', 'tillåt', 'allow all', 'allow cookies', 'allow',
+                'agree', 'i agree', 'ok', 'got it', 'förstår', 'jag förstår',
                 'fortsätt', 'continue', 'bekräfta', 'confirm'
             ];
             const candidates = document.querySelectorAll(
@@ -185,7 +201,7 @@ async fn dismiss_cookie_banners(page: &chromiumoxide::Page) {
                     .trim().toLowerCase();
                 if (keywords.some(k => text === k || text.startsWith(k))) {
                     el.click();
-                    return true;
+                    return 'text-match:' + text;
                 }
             }
             return false;
@@ -204,9 +220,11 @@ async fn dismiss_cookie_banners(page: &chromiumoxide::Page) {
                 /* OneTrust */
                 #onetrust-banner-sdk, #onetrust-consent-sdk,
                 .onetrust-pc-dark-filter,
-                /* Cookiebot */
+                /* Cookiebot (generic + folkhalsomyndigheten.se variant) */
                 #CybotCookiebotDialog, #CybotCookiebotDialogBody,
                 .CybotCookiebotFader,
+                #CookieBanner, #CookieBannerNotice, #CookieBannerDetails,
+                .is-visible-cookie-banner,
                 /* Cookie Notice / WP plugins */
                 #cookie-notice, .cookie-notice, #cookie-law-info-bar,
                 .cookie-law-info-bar, #cookie-popup, .cookie-popup,
