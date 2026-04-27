@@ -3,7 +3,7 @@ mod commands;
 mod crawler;
 mod pdf;
 
-use commands::CrawlState;
+use commands::{CrawlState, PreviewState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,6 +11,7 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(CrawlState::default())
+        .manage(PreviewState::default())
         .invoke_handler(tauri::generate_handler![
             commands::chromium_ready,
             commands::download_chromium,
@@ -18,6 +19,8 @@ pub fn run() {
             commands::open_file,
             commands::start_crawl,
             commands::cancel_crawl,
+            commands::open_preview_browser,
+            commands::close_preview_browser,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

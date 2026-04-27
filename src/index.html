@@ -51,10 +51,22 @@
           rows="3"
           spellcheck="false"
         ></textarea>
+        <label class="checkbox-row">
+          <input type="checkbox" id="manual-cookies" />
+          <span>Hantera kakbanners manuellt <span class="hint">(öppnar webbläsaren)</span></span>
+        </label>
       </details>
 
       <button id="start-btn" class="primary" type="button" disabled>Starta</button>
       <p id="input-error" class="error hidden"></p>
+    </div>
+
+    <!-- Prepare phase: user handles cookie banners in visible browser -->
+    <div id="phase-prepare" class="hidden">
+      <h1>site2PDF</h1>
+      <p class="setup-desc">Webbläsarfönstret är öppet. Acceptera kakbanners och logga in om det behövs — stäng inte fönstret. Klicka Starta krypning när du är klar.</p>
+      <button id="prepare-start-btn" class="primary" type="button">Starta krypning</button>
+      <button id="prepare-cancel-btn" type="button" style="margin-top:8px; width:100%">Avbryt</button>
     </div>
 
     <!-- Progress phase -->

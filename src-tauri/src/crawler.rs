@@ -17,6 +17,9 @@ pub struct CrawlConfig {
     pub chromium_path: PathBuf,
     /// Glob-style patterns (using `*` as wildcard) — matching URLs are skipped.
     pub blocked_patterns: Vec<String>,
+    /// If set, Chromium is launched with this user-data-dir to inherit cookies
+    /// from a prior headed session (manual cookie banner handling).
+    pub user_data_dir: Option<PathBuf>,
 }
 
 #[derive(Serialize, Clone)]
@@ -32,12 +35,18 @@ pub async fn crawl(
     progress_tx: mpsc::UnboundedSender<Progress>,
     cancel: CancellationToken,
 ) -> Result<Vec<Vec<u8>>> {
-    let browser_config = BrowserConfig::builder()
+    let mut browser_builder = BrowserConfig::builder()
         .chrome_executable(&config.chromium_path)
         .arg("--headless")
         .arg("--disable-gpu")
         .arg("--no-sandbox")
-        .arg("--disable-dev-shm-usage")
+        .arg("--disable-dev-shm-usage");
+
+    if let Some(dir) = &config.user_data_dir {
+        browser_builder = browser_builder.arg(format!("--user-data-dir={}", dir.display()));
+    }
+
+    let browser_config = browser_builder
         .build()
         .map_err(|e| anyhow::anyhow!("BrowserConfig error: {e}"))?;
 
@@ -110,6 +119,11 @@ pub async fn crawl(
     }
 
     browser.close().await?;
+
+    if let Some(dir) = &config.user_data_dir {
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     Ok(pdf_pages)
 }
 

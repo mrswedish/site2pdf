@@ -4,6 +4,7 @@ const { listen } = window.__TAURI__.event;
 // ── Elements ──────────────────────────────────────────────────────────────────
 const phaseSetup    = document.getElementById('phase-setup');
 const phaseInput    = document.getElementById('phase-input');
+const phasePrepare  = document.getElementById('phase-prepare');
 const phaseProgress = document.getElementById('phase-progress');
 const phaseDone     = document.getElementById('phase-done');
 
@@ -11,17 +12,21 @@ const setupBar      = document.getElementById('setup-bar');
 const setupLabel    = document.getElementById('setup-label');
 const setupStartBtn = document.getElementById('setup-start-btn');
 
-const urlInput      = document.getElementById('url');
-const outputInput   = document.getElementById('output-path');
-const maxDepthInput = document.getElementById('max-depth');
-const browseBtn     = document.getElementById('browse-btn');
-const startBtn      = document.getElementById('start-btn');
-const inputError    = document.getElementById('input-error');
+const urlInput          = document.getElementById('url');
+const outputInput       = document.getElementById('output-path');
+const maxDepthInput     = document.getElementById('max-depth');
+const browseBtn         = document.getElementById('browse-btn');
+const startBtn          = document.getElementById('start-btn');
+const inputError        = document.getElementById('input-error');
+const manualCookiesCb   = document.getElementById('manual-cookies');
+const blockedInput      = document.getElementById('blocked-patterns');
+
+const prepareStartBtn   = document.getElementById('prepare-start-btn');
+const prepareCancelBtn  = document.getElementById('prepare-cancel-btn');
 
 const progressLabel = document.getElementById('progress-label');
 const progressBar   = document.getElementById('progress-bar');
 const progressUrl   = document.getElementById('progress-url');
-const blockedInput  = document.getElementById('blocked-patterns');
 const cancelBtn     = document.getElementById('cancel-btn');
 
 const doneMessage   = document.getElementById('done-message');
@@ -30,6 +35,7 @@ const restartBtn    = document.getElementById('restart-btn');
 
 let lastOutputPath = '';
 let unlisten = [];
+let pendingCrawlParams = null;
 
 // ── Boot: check if Chromium is already present ────────────────────────────────
 async function boot() {
@@ -87,6 +93,36 @@ startBtn.addEventListener('click', async () => {
     .map(s => s.trim())
     .filter(s => s.length > 0);
 
+  if (manualCookiesCb.checked) {
+    // Open a visible browser so the user can handle cookie banners manually
+    pendingCrawlParams = { url, outputPath, maxDepth, blockedPatterns };
+    try {
+      await invoke('open_preview_browser', { url });
+      showPhase('prepare');
+    } catch (err) {
+      showError(String(err));
+    }
+    return;
+  }
+
+  // Direct crawl (no manual cookie handling)
+  beginCrawl({ url, outputPath, maxDepth, blockedPatterns });
+});
+
+// ── Prepare phase ─────────────────────────────────────────────────────────────
+prepareStartBtn.addEventListener('click', () => {
+  beginCrawl(pendingCrawlParams);
+  pendingCrawlParams = null;
+});
+
+prepareCancelBtn.addEventListener('click', async () => {
+  await invoke('close_preview_browser').catch(() => {});
+  pendingCrawlParams = null;
+  showPhase('input');
+});
+
+// ── Start the actual crawl ────────────────────────────────────────────────────
+async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns }) {
   showPhase('progress');
   progressBar.style.width = '0%';
   progressLabel.textContent = 'Startar krypning…';
@@ -120,7 +156,7 @@ startBtn.addEventListener('click', async () => {
     showPhase('input');
     showError(String(err));
   }
-});
+}
 
 cancelBtn.addEventListener('click', async () => {
   await invoke('cancel_crawl').catch(() => {});
@@ -138,6 +174,7 @@ restartBtn.addEventListener('click', () => showPhase('input'));
 function showPhase(name) {
   phaseSetup.classList.toggle('hidden', name !== 'setup');
   phaseInput.classList.toggle('hidden', name !== 'input');
+  phasePrepare.classList.toggle('hidden', name !== 'prepare');
   phaseProgress.classList.toggle('hidden', name !== 'progress');
   phaseDone.classList.toggle('hidden', name !== 'done');
 }
