@@ -82,6 +82,9 @@ pub async fn crawl(
         // Wait for document to be ready
         wait_for_ready(&page).await;
 
+        // Dismiss cookie consent banners before generating PDF
+        dismiss_cookie_banners(&page).await;
+
         // Export page to PDF
         match page.pdf(PrintToPdfParams::default()).await {
             Ok(bytes) => pdf_pages.push(bytes),
@@ -160,6 +163,87 @@ async fn wait_for_ready(page: &chromiumoxide::Page) {
     }
     // Extra settle time for JS-heavy pages
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+}
+
+async fn dismiss_cookie_banners(page: &chromiumoxide::Page) {
+    // Step 1: try to click the most common "accept" buttons.
+    // The list covers Swedish, English and common button labels.
+    let click_script = r#"
+        (function() {
+            const keywords = [
+                'acceptera alla', 'acceptera', 'accept all', 'accept cookies',
+                'accept', 'godkänn alla', 'godkänn', 'tillåt alla', 'tillåt',
+                'allow all', 'allow cookies', 'allow', 'agree', 'i agree',
+                'ok', 'got it', 'förstår', 'jag förstår', 'stäng', 'close',
+                'fortsätt', 'continue', 'bekräfta', 'confirm'
+            ];
+            const candidates = document.querySelectorAll(
+                'button, [role="button"], input[type="button"], input[type="submit"], a.btn, a.button'
+            );
+            for (const el of candidates) {
+                const text = (el.textContent || el.value || el.getAttribute('aria-label') || '')
+                    .trim().toLowerCase();
+                if (keywords.some(k => text === k || text.startsWith(k))) {
+                    el.click();
+                    return true;
+                }
+            }
+            return false;
+        })()
+    "#;
+    let _ = page.evaluate(click_script).await;
+
+    // Brief pause so JS can process the click and remove the overlay.
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+
+    // Step 2: hide any remaining banners via CSS — covers OneTrust, Cookiebot,
+    // Cookie Notice, GDPR Cookie Compliance and generic attribute patterns.
+    let hide_script = r#"
+        (function() {
+            const css = `
+                /* OneTrust */
+                #onetrust-banner-sdk, #onetrust-consent-sdk,
+                .onetrust-pc-dark-filter,
+                /* Cookiebot */
+                #CybotCookiebotDialog, #CybotCookiebotDialogBody,
+                .CybotCookiebotFader,
+                /* Cookie Notice / WP plugins */
+                #cookie-notice, .cookie-notice, #cookie-law-info-bar,
+                .cookie-law-info-bar, #cookie-popup, .cookie-popup,
+                /* GDPR Cookie Compliance */
+                .moove-gdpr-info-bar, .moove-gdpr-infobar-allow-all,
+                /* Usercentrics */
+                #usercentrics-root,
+                /* Generic attribute selectors */
+                [id*="cookie-banner"], [id*="cookiebanner"],
+                [id*="cookie-consent"], [id*="cookieconsent"],
+                [id*="cookie-notice"], [id*="gdpr-banner"],
+                [class*="cookie-banner"], [class*="cookiebanner"],
+                [class*="cookie-consent"], [class*="cookieconsent"],
+                [class*="cookie-notice"], [class*="gdpr-banner"],
+                [class*="cookie-overlay"], [class*="consent-overlay"],
+                /* Overlay/backdrop */
+                [class*="cookie-modal"], [id*="cookie-modal"]
+                {
+                    display: none !important;
+                    visibility: hidden !important;
+                    opacity: 0 !important;
+                }
+                /* Re-enable scroll if banner had locked the body */
+                body { overflow: auto !important; }
+            `;
+            const style = document.createElement('style');
+            style.id = '__s2pdf_nocookie__';
+            if (!document.getElementById('__s2pdf_nocookie__')) {
+                style.textContent = css;
+                document.head.appendChild(style);
+            }
+        })()
+    "#;
+    let _ = page.evaluate(hide_script).await;
+
+    // Let any CSS transitions finish before printing.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 }
 
 async fn extract_links(
