@@ -18,6 +18,8 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
@@ -28,23 +30,53 @@ jobs:
         run: cargo install tauri-cli --version "^2" --locked
 
       - name: Build
+        env:
+          CARGO_TARGET_DIR: D:\t
         run: cargo tauri build
 
-      - name: Package portable zip
-        shell: pwsh
+      - name: Copy portable exe
+        env:
+          CARGO_TARGET_DIR: D:\t
         run: |
-          $version = "${{ github.ref_name }}"
-          $outDir = "portable/site2pdf-$version-portable"
-          New-Item -ItemType Directory -Path "$outDir/resources/chromium" -Force
-          Copy-Item "src-tauri/target/release/site2pdf.exe" "$outDir/"
-          Copy-Item "src-tauri/resources/chromium/chrome-win64" "$outDir/resources/chromium/" -Recurse
-          Compress-Archive -Path "$outDir" -DestinationPath "site2pdf-$version-portable.zip"
+          $base = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "src-tauri/target" }
+          $candidates = @(
+            "$base/release/site2pdf.exe",
+            "$base/x86_64-pc-windows-msvc/release/site2pdf.exe"
+          )
+          $found = $false
+          foreach ($p in $candidates) {
+            if (Test-Path $p) {
+              Copy-Item $p "site2pdf-portable.exe"
+              $found = $true
+              break
+            }
+          }
+          if (-not $found) {
+            Get-ChildItem -Path $base -Filter "*.exe" -Recurse | Select-Object FullName
+            Write-Error "Could not find site2pdf.exe"
+          }
+
+      - name: Copy NSIS installer
+        env:
+          CARGO_TARGET_DIR: D:\t
+        run: |
+          $base = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "src-tauri/target" }
+          $dirs = @("$base/release/bundle/nsis", "$base/x86_64-pc-windows-msvc/release/bundle/nsis")
+          foreach ($dir in $dirs) {
+            if (Test-Path $dir) {
+              $installer = Get-ChildItem $dir -Filter "*-setup*.exe" | Select-Object -First 1
+              if ($installer) {
+                Copy-Item $installer.FullName "site2pdf-setup.exe"
+                break
+              }
+            }
+          }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            site2pdf-*-portable.zip
+            site2pdf-portable.exe
+            site2pdf-setup.exe
           generate_release_notes: true

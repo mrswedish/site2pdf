@@ -1,9 +1,10 @@
+use crate::chromium_manager::{self, DownloadProgress};
 use crate::crawler::{crawl, CrawlConfig, Progress};
 use crate::pdf::merge_pdfs;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, Window};
+use tauri::{AppHandle, Emitter, Window};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -18,25 +19,31 @@ pub struct CompleteInfo {
     pub file_size: u64,
 }
 
-fn chromium_binary(app: &AppHandle) -> Result<PathBuf, String> {
-    let res_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("Resource dir not found: {e}"))?;
+// ── Chromium management ───────────────────────────────────────────────────────
 
-    #[cfg(target_os = "windows")]
-    let rel = "resources/chromium/chrome-win64/chrome.exe";
-    #[cfg(target_os = "macos")]
-    let rel = "resources/chromium/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let rel = "resources/chromium/chrome-linux64/chrome";
-
-    let path = res_dir.join(rel);
-    if !path.exists() {
-        return Err(format!("Chromium binary not found at {path:?}"));
-    }
-    Ok(path)
+#[tauri::command]
+pub fn chromium_ready(app: AppHandle) -> bool {
+    chromium_manager::is_chromium_present(&app)
 }
+
+#[tauri::command]
+pub async fn download_chromium(app: AppHandle, window: Window) -> Result<(), String> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<DownloadProgress>();
+
+    let win = window.clone();
+    tokio::spawn(async move {
+        while let Some(p) = rx.recv().await {
+            let _ = win.emit("chromium-download-progress", &p);
+        }
+    });
+
+    chromium_manager::ensure_chromium(&app, tx)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+// ── File dialog / open ────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn choose_save_path(app: AppHandle) -> Result<Option<String>, String> {
@@ -52,6 +59,13 @@ pub async fn choose_save_path(app: AppHandle) -> Result<Option<String>, String> 
 }
 
 #[tauri::command]
+pub fn open_file(path: String) -> Result<(), String> {
+    opener::open(&path).map_err(|e| e.to_string())
+}
+
+// ── Crawl ─────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
 pub async fn start_crawl(
     app: AppHandle,
     window: Window,
@@ -60,7 +74,11 @@ pub async fn start_crawl(
     output_path: String,
     max_depth: Option<u32>,
 ) -> Result<(), String> {
-    let chromium = chromium_binary(&app)?;
+    let chromium = chromium_manager::chromium_binary_path(&app).map_err(|e| e.to_string())?;
+    if !chromium.exists() {
+        return Err("Chromium är inte installerat. Ladda ned det först.".into());
+    }
+
     let config = CrawlConfig {
         url,
         output_path: PathBuf::from(&output_path),
@@ -73,7 +91,6 @@ pub async fn start_crawl(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Progress>();
 
-    // Forward progress events to the frontend
     let win_clone = window.clone();
     tokio::spawn(async move {
         while let Some(p) = rx.recv().await {
@@ -87,31 +104,27 @@ pub async fn start_crawl(
             Ok(pdf_pages) => {
                 let total = pdf_pages.len();
                 match merge_pdfs(pdf_pages) {
-                    Ok(merged) => {
-                        match std::fs::write(&config.output_path, &merged) {
-                            Ok(_) => {
-                                let size = std::fs::metadata(&config.output_path)
-                                    .map(|m| m.len())
-                                    .unwrap_or(0);
-                                let _ = win.emit(
-                                    "crawl-complete",
-                                    CompleteInfo {
-                                        total,
-                                        output_path: config
-                                            .output_path
-                                            .to_string_lossy()
-                                            .into_owned(),
-                                        file_size: size,
-                                    },
-                                );
-                            }
-                            Err(e) => {
-                                let _ = win.emit("crawl-error", format!("Kunde inte spara PDF: {e}"));
-                            }
+                    Ok(merged) => match std::fs::write(&config.output_path, &merged) {
+                        Ok(_) => {
+                            let size = std::fs::metadata(&config.output_path)
+                                .map(|m| m.len())
+                                .unwrap_or(0);
+                            let _ = win.emit(
+                                "crawl-complete",
+                                CompleteInfo {
+                                    total,
+                                    output_path: config.output_path.to_string_lossy().into_owned(),
+                                    file_size: size,
+                                },
+                            );
                         }
-                    }
+                        Err(e) => {
+                            let _ = win.emit("crawl-error", format!("Kunde inte spara PDF: {e}"));
+                        }
+                    },
                     Err(e) => {
-                        let _ = win.emit("crawl-error", format!("PDF-sammanslagning misslyckades: {e}"));
+                        let _ = win
+                            .emit("crawl-error", format!("PDF-sammanslagning misslyckades: {e}"));
                     }
                 }
             }
@@ -130,9 +143,4 @@ pub async fn cancel_crawl(state: tauri::State<'_, CrawlState>) -> Result<(), Str
         token.cancel();
     }
     Ok(())
-}
-
-#[tauri::command]
-pub fn open_file(path: String) -> Result<(), String> {
-    opener::open(&path).map_err(|e| e.to_string())
 }

@@ -9,8 +9,19 @@
 <body>
   <div id="app">
 
+    <!-- First-run: download Chromium -->
+    <div id="phase-setup" class="hidden">
+      <h1>site2PDF</h1>
+      <p class="setup-desc">Laddar ned Chrome for Testing (~170 MB) för att kunna rendera webbsidor. Det här sker bara en gång.</p>
+      <div class="progress-bar-track">
+        <div id="setup-bar" class="progress-bar-fill"></div>
+      </div>
+      <p id="setup-label" class="muted">Kontaktar server…</p>
+      <button id="setup-start-btn" class="primary" type="button">Ladda ned</button>
+    </div>
+
     <!-- Input phase -->
-    <div id="phase-input">
+    <div id="phase-input" class="hidden">
       <h1>site2PDF</h1>
 
       <label for="url">URL att hämta</label>
@@ -24,23 +35,12 @@
 
       <label for="output-path">Spara PDF till</label>
       <div class="path-row">
-        <input
-          type="text"
-          id="output-path"
-          placeholder="C:\Users\...\output.pdf"
-          readonly
-        />
+        <input type="text" id="output-path" placeholder="C:\Users\...\output.pdf" readonly />
         <button id="browse-btn" type="button">Bläddra…</button>
       </div>
 
       <label for="max-depth">Maxdjup <span class="hint">(0 = bara startsidan)</span></label>
-      <input
-        type="number"
-        id="max-depth"
-        min="0"
-        max="99"
-        value="3"
-      />
+      <input type="number" id="max-depth" min="0" max="99" value="3" />
 
       <button id="start-btn" class="primary" type="button" disabled>Starta</button>
       <p id="input-error" class="error hidden"></p>
