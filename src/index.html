@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>site2PDF</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- Input phase -->
+    <div id="phase-input">
+      <h1>site2PDF</h1>
+
+      <label for="url">URL att hämta</label>
+      <input
+        type="url"
+        id="url"
+        placeholder="https://docs.example.com/guide/"
+        autocomplete="off"
+        spellcheck="false"
+      />
+
+      <label for="output-path">Spara PDF till</label>
+      <div class="path-row">
+        <input
+          type="text"
+          id="output-path"
+          placeholder="C:\Users\...\output.pdf"
+          readonly
+        />
+        <button id="browse-btn" type="button">Bläddra…</button>
+      </div>
+
+      <label for="max-depth">Maxdjup <span class="hint">(0 = bara startsidan)</span></label>
+      <input
+        type="number"
+        id="max-depth"
+        min="0"
+        max="99"
+        value="3"
+      />
+
+      <button id="start-btn" class="primary" type="button" disabled>Starta</button>
+      <p id="input-error" class="error hidden"></p>
+    </div>
+
+    <!-- Progress phase -->
+    <div id="phase-progress" class="hidden">
+      <h1>site2PDF</h1>
+      <p id="progress-label">Förbereder…</p>
+      <div class="progress-bar-track">
+        <div id="progress-bar" class="progress-bar-fill"></div>
+      </div>
+      <p id="progress-url" class="url-label"></p>
+      <button id="cancel-btn" type="button">Avbryt</button>
+    </div>
+
+    <!-- Done phase -->
+    <div id="phase-done" class="hidden">
+      <h1>site2PDF</h1>
+      <p id="done-message" class="success"></p>
+      <div class="done-actions">
+        <button id="open-btn" type="button" class="primary">Öppna fil</button>
+        <button id="restart-btn" type="button">Starta om</button>
+      </div>
+    </div>
+
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>

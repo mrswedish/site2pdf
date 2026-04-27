@@ -1,0 +1,34 @@
+[package]
+name = "site2pdf"
+version = "0.1.0"
+description = "Portable Windows app to crawl websites and export to PDF"
+authors = []
+license = "MIT"
+repository = "https://github.com/mrswedish/site2pdf"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "site2pdf_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+reqwest = { version = "0.11", features = ["blocking"] }
+zip = "0.6"
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+chromiumoxide = { version = "0.5", features = ["tokio-runtime"] }
+lopdf = "0.32"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+url = "2"
+anyhow = "1"
+futures = "0.3"
+opener = "0.7"

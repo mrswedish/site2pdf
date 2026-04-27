@@ -1,0 +1,181 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #1a1a1a;
+  --surface: #242424;
+  --border: #333;
+  --text: #e8e8e8;
+  --muted: #888;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --error: #ef4444;
+  --success: #22c55e;
+  --radius: 6px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  user-select: none;
+}
+
+#app {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 28px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  margin-bottom: 20px;
+  color: var(--text);
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 5px;
+  margin-top: 14px;
+}
+
+label:first-of-type { margin-top: 0; }
+
+.hint {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+input[type="url"],
+input[type="text"],
+input[type="number"] {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+input[type="url"]:focus,
+input[type="text"]:focus,
+input[type="number"]:focus {
+  border-color: var(--accent);
+}
+
+input[type="number"] { width: 80px; }
+
+input[readonly] { cursor: default; color: var(--muted); }
+
+.path-row {
+  display: flex;
+  gap: 8px;
+}
+
+.path-row input { flex: 1; }
+
+button {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+button:hover { background: #2e2e2e; }
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+#start-btn {
+  width: 100%;
+  margin-top: 20px;
+  padding: 10px;
+  font-size: 14px;
+}
+
+#cancel-btn {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.error { color: var(--error); font-size: 12px; margin-top: 8px; }
+.success { color: var(--success); font-size: 14px; line-height: 1.5; }
+
+.hidden { display: none !important; }
+
+/* Progress */
+#phase-progress, #phase-done { padding-top: 0; }
+
+#progress-label {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.progress-bar-track {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 99px;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+#progress-url {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.done-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.done-actions button { flex: 1; }

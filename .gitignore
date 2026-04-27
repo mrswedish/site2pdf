@@ -1,0 +1,5 @@
+/target
+/src-tauri/target
+/src-tauri/resources/chromium
+node_modules
+.env
