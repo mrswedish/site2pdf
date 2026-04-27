@@ -42,6 +42,17 @@
       <label for="max-depth">Maxdjup <span class="hint">(0 = bara startsidan)</span></label>
       <input type="number" id="max-depth" min="0" max="99" value="3" />
 
+      <details id="advanced">
+        <summary>Avancerat</summary>
+        <label for="blocked-patterns">Blockera URL-mönster <span class="hint">(ett per rad, * = wildcard)</span></label>
+        <textarea
+          id="blocked-patterns"
+          placeholder="*/testa-dina-kunskaper/*&#10;*/quiz/*"
+          rows="3"
+          spellcheck="false"
+        ></textarea>
+      </details>
+
       <button id="start-btn" class="primary" type="button" disabled>Starta</button>
       <p id="input-error" class="error hidden"></p>
     </div>

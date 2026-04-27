@@ -123,6 +123,43 @@ button:disabled {
 .setup-desc { font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 14px; }
 .muted { font-size: 12px; color: var(--muted); margin-top: 8px; }
 
+details#advanced {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+details#advanced summary {
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+details#advanced summary::before { content: '▶  '; font-size: 9px; }
+details#advanced[open] summary::before { content: '▼  '; }
+
+details#advanced label { margin-top: 10px; }
+
+textarea {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  font-family: monospace;
+  resize: vertical;
+  outline: none;
+}
+
+textarea:focus { border-color: var(--accent); }
+
 #setup-start-btn {
   width: 100%;
   margin-top: 16px;

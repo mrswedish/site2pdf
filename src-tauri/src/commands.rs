@@ -73,6 +73,7 @@ pub async fn start_crawl(
     url: String,
     output_path: String,
     max_depth: Option<u32>,
+    blocked_patterns: Vec<String>,
 ) -> Result<(), String> {
     let chromium = chromium_manager::chromium_binary_path(&app).map_err(|e| e.to_string())?;
     if !chromium.exists() {
@@ -84,6 +85,7 @@ pub async fn start_crawl(
         output_path: PathBuf::from(&output_path),
         max_depth,
         chromium_path: chromium,
+        blocked_patterns,
     };
 
     let token = CancellationToken::new();

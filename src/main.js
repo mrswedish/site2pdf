@@ -21,6 +21,7 @@ const inputError    = document.getElementById('input-error');
 const progressLabel = document.getElementById('progress-label');
 const progressBar   = document.getElementById('progress-bar');
 const progressUrl   = document.getElementById('progress-url');
+const blockedInput  = document.getElementById('blocked-patterns');
 const cancelBtn     = document.getElementById('cancel-btn');
 
 const doneMessage   = document.getElementById('done-message');
@@ -81,6 +82,10 @@ startBtn.addEventListener('click', async () => {
 
   const maxDepthVal = maxDepthInput.value.trim();
   const maxDepth = maxDepthVal === '' ? null : parseInt(maxDepthVal, 10);
+  const blockedPatterns = blockedInput.value
+    .split('\n')
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
 
   showPhase('progress');
   progressBar.style.width = '0%';
@@ -109,7 +114,7 @@ startBtn.addEventListener('click', async () => {
   }));
 
   try {
-    await invoke('start_crawl', { url, outputPath, maxDepth });
+    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns });
   } catch (err) {
     cleanup();
     showPhase('input');

@@ -15,6 +15,8 @@ pub struct CrawlConfig {
     pub output_path: PathBuf,
     pub max_depth: Option<u32>,
     pub chromium_path: PathBuf,
+    /// Glob-style patterns (using `*` as wildcard) — matching URLs are skipped.
+    pub blocked_patterns: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -92,7 +94,9 @@ pub async fn crawl(
             let links = extract_links(&page, &start_url, &prefix).await;
             for link in links {
                 let normalized = normalize_url(&link);
-                if !visited.contains(&normalized) {
+                if !visited.contains(&normalized)
+                    && !is_blocked(&link, &config.blocked_patterns)
+                {
                     visited.insert(normalized);
                     queue.push_back((link, depth + 1));
                 }
@@ -104,6 +108,31 @@ pub async fn crawl(
 
     browser.close().await?;
     Ok(pdf_pages)
+}
+
+/// Returns true if `url` matches any of the glob patterns (only `*` wildcard supported).
+fn is_blocked(url: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|pat| glob_match(url, pat))
+}
+
+fn glob_match(url: &str, pattern: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    let mut remaining = url;
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        match remaining.find(part) {
+            Some(pos) if i == 0 && pos != 0 => return false, // first part must anchor to start
+            Some(pos) => remaining = &remaining[pos + part.len()..],
+            None => return false,
+        }
+    }
+    // If pattern ends without *, remaining must be empty
+    if !pattern.ends_with('*') && !remaining.is_empty() {
+        return false;
+    }
+    true
 }
 
 fn build_prefix(url: &str) -> String {

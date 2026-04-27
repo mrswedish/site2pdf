@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 use lopdf::{Dictionary, Document, Object, ObjectId};
-use std::collections::BTreeMap;
 
-/// Merge multiple PDF byte slices into a single PDF.
+/// Merge multiple single-page PDF byte slices into one document.
 pub fn merge_pdfs(pages: Vec<Vec<u8>>) -> Result<Vec<u8>> {
     if pages.is_empty() {
         anyhow::bail!("No pages to merge");
@@ -13,55 +12,54 @@ pub fn merge_pdfs(pages: Vec<Vec<u8>>) -> Result<Vec<u8>> {
 
     let mut docs: Vec<Document> = pages
         .iter()
-        .map(|b| Document::load_mem(b).context("Failed to parse PDF"))
+        .map(|b| Document::load_mem(b).context("Failed to parse PDF page"))
         .collect::<Result<_>>()?;
 
-    // Renumber each document's objects with non-overlapping seeds
+    // Renumber every document's object IDs with non-overlapping seeds
+    // so we can safely combine them into one object table.
     let mut seed = 1u32;
     for doc in &mut docs {
         doc.renumber_objects_with(seed);
         seed = doc.max_id + 1;
     }
 
+    // Build merged document. Set max_id so new_object_id() is safe.
     let mut merged = Document::with_version("1.5");
-    let mut all_page_ids: Vec<ObjectId> = Vec::new();
-    let mut all_objects: BTreeMap<ObjectId, Object> = BTreeMap::new();
+    merged.max_id = seed;
 
-    for doc in &docs {
-        let page_ids: Vec<ObjectId> = doc.get_pages().into_values().collect();
-        all_page_ids.extend(&page_ids);
+    let mut page_ids: Vec<ObjectId> = Vec::new();
 
-        for (id, obj) in &doc.objects {
+    for doc in docs {
+        for (id, obj) in doc.objects {
             match obj.type_name().unwrap_or("") {
-                "Catalog" | "Pages" => {} // rebuilt below
+                // Catalog and Pages are rebuilt below; skip source copies.
+                "Catalog" | "Pages" => {}
+                "Page" => {
+                    page_ids.push(id);
+                    merged.objects.insert(id, obj);
+                }
                 _ => {
-                    all_objects.insert(*id, obj.clone());
+                    merged.objects.insert(id, obj);
                 }
             }
         }
+    }
 
-        // Keep Page objects
-        for page_id in &page_ids {
-            if let Ok(page_obj) = doc.get_object(*page_id) {
-                all_objects.insert(*page_id, page_obj.clone());
+    // Allocate IDs for the unified Pages node and Catalog.
+    let pages_id = merged.new_object_id();
+    let catalog_id = merged.new_object_id();
+
+    // Every Page must point to our new Pages node as its Parent.
+    for page_id in &page_ids {
+        if let Some(obj) = merged.objects.get_mut(page_id) {
+            if let Ok(dict) = obj.as_dict_mut() {
+                dict.set("Parent", Object::Reference(pages_id));
             }
         }
     }
 
-    // Build the Pages node
-    let pages_id: ObjectId = (seed, 0);
-    seed += 1;
-    let catalog_id: ObjectId = (seed, 0);
-
-    let kids: Vec<Object> = all_page_ids.iter().map(|id| Object::Reference(*id)).collect();
-    let count = all_page_ids.len() as i64;
-
-    // Update each Page's Parent reference to point to our new Pages node
-    for page_id in &all_page_ids {
-        if let Some(Object::Dictionary(dict)) = all_objects.get_mut(page_id) {
-            dict.set("Parent", Object::Reference(pages_id));
-        }
-    }
+    let kids: Vec<Object> = page_ids.iter().map(|id| Object::Reference(*id)).collect();
+    let count = page_ids.len() as i64;
 
     let mut pages_dict = Dictionary::new();
     pages_dict.set("Type", Object::Name(b"Pages".to_vec()));
@@ -72,16 +70,13 @@ pub fn merge_pdfs(pages: Vec<Vec<u8>>) -> Result<Vec<u8>> {
     catalog_dict.set("Type", Object::Name(b"Catalog".to_vec()));
     catalog_dict.set("Pages", Object::Reference(pages_id));
 
-    merged.objects.extend(all_objects);
-    merged
-        .objects
-        .insert(pages_id, Object::Dictionary(pages_dict));
-    merged
-        .objects
-        .insert(catalog_id, Object::Dictionary(catalog_dict));
+    merged.objects.insert(pages_id, Object::Dictionary(pages_dict));
+    merged.objects.insert(catalog_id, Object::Dictionary(catalog_dict));
     merged.trailer.set("Root", Object::Reference(catalog_id));
 
     let mut buf = Vec::new();
-    merged.save_to(&mut buf).context("Failed to serialise merged PDF")?;
+    merged
+        .save_to(&mut buf)
+        .context("Failed to serialise merged PDF")?;
     Ok(buf)
 }
