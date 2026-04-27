@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::mpsc;
 
 const VERSIONS_URL: &str =
-    "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json";
+    "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json";
 
 #[cfg(target_os = "windows")]
 const PLATFORM: &str = "win64";
