@@ -80,42 +80,96 @@ pub async fn crawl(
             done: pdf_pages.len(),
         });
 
-        let page = match browser.new_page(&*url).await {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("Failed to load {url}: {e}");
-                continue;
-            }
-        };
+        // Try up to 2 times: once normally, once after a longer back-off
+        let mut pdf_bytes: Option<Vec<u8>> = None;
+        let mut page_links: Vec<String> = Vec::new();
+        let mut attempt = 0u8;
 
-        // Wait for document to be ready
-        wait_for_ready(&page).await;
+        'retry: loop {
+            attempt += 1;
 
-        // Dismiss cookie consent banners before generating PDF
-        dismiss_cookie_banners(&page).await;
+            // Open page with a 30-second timeout
+            let page = match tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                browser.new_page(&*url),
+            )
+            .await
+            {
+                Ok(Ok(p)) => p,
+                Ok(Err(e)) => {
+                    eprintln!("Failed to open {url} (attempt {attempt}): {e}");
+                    if attempt < 2 {
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        continue 'retry;
+                    }
+                    break 'retry;
+                }
+                Err(_) => {
+                    eprintln!("Timeout opening {url} (attempt {attempt})");
+                    if attempt < 2 {
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        continue 'retry;
+                    }
+                    break 'retry;
+                }
+            };
 
-        // Export page to PDF
-        match page.pdf(PrintToPdfParams::default()).await {
-            Ok(bytes) => pdf_pages.push(bytes),
-            Err(e) => eprintln!("PDF failed for {url}: {e}"),
-        }
+            // Wait for document to be ready
+            wait_for_ready(&page).await;
 
-        // Extract links if we haven't hit max depth
-        let should_follow = config.max_depth.map_or(true, |max| depth < max);
-        if should_follow {
-            let links = extract_links(&page, &start_url, &prefix).await;
-            for link in links {
-                let normalized = normalize_url(&link);
-                if !visited.contains(&normalized)
-                    && !is_blocked(&link, &config.blocked_patterns)
-                {
-                    visited.insert(normalized);
-                    queue.push_back((link, depth + 1));
+            // Dismiss cookie consent banners before generating PDF
+            dismiss_cookie_banners(&page).await;
+
+            // Export page to PDF (30-second timeout)
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                page.pdf(PrintToPdfParams::default()),
+            )
+            .await
+            {
+                Ok(Ok(bytes)) => pdf_bytes = Some(bytes),
+                Ok(Err(e)) => {
+                    eprintln!("PDF failed for {url} (attempt {attempt}): {e}");
+                    if attempt < 2 {
+                        let _ = page.close().await;
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        continue 'retry;
+                    }
+                }
+                Err(_) => {
+                    eprintln!("PDF timeout for {url} (attempt {attempt})");
+                    if attempt < 2 {
+                        let _ = page.close().await;
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        continue 'retry;
+                    }
                 }
             }
+
+            // Extract links if we haven't hit max depth
+            let should_follow = config.max_depth.map_or(true, |max| depth < max);
+            if should_follow {
+                page_links = extract_links(&page, &start_url, &prefix).await;
+            }
+
+            let _ = page.close().await;
+            break 'retry;
         }
 
-        let _ = page.close().await;
+        if let Some(bytes) = pdf_bytes {
+            pdf_pages.push(bytes);
+        }
+
+        for link in page_links {
+            let normalized = normalize_url(&link);
+            if !visited.contains(&normalized) && !is_blocked(&link, &config.blocked_patterns) {
+                visited.insert(normalized);
+                queue.push_back((link, depth + 1));
+            }
+        }
+
+        // Paus mellan sidor — minskar risken för rate limiting
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
     browser.close().await?;
