@@ -42,6 +42,12 @@ pub async fn crawl(
         .arg("--no-sandbox")
         .arg("--disable-dev-shm-usage");
 
+    // macOS 26+ blocks Chrome's internal fork() calls from a multi-threaded
+    // process. --single-process eliminates all forking by running renderer,
+    // GPU and network in the same OS process.
+    #[cfg(target_os = "macos")]
+    { browser_builder = browser_builder.arg("--single-process"); }
+
     if let Some(dir) = &config.user_data_dir {
         browser_builder = browser_builder.arg(format!("--user-data-dir={}", dir.display()));
     }

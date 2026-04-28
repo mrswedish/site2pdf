@@ -98,12 +98,17 @@ pub async fn open_preview_browser(
     }
     std::fs::create_dir_all(&profile_dir).map_err(|e| e.to_string())?;
 
-    let browser_config = BrowserConfig::builder()
+    let mut preview_builder = BrowserConfig::builder()
         .chrome_executable(&chromium)
         .arg("--no-sandbox")
         .arg("--disable-gpu")
         .arg("--disable-dev-shm-usage")
-        .arg(format!("--user-data-dir={}", profile_dir.display()))
+        .arg(format!("--user-data-dir={}", profile_dir.display()));
+
+    #[cfg(target_os = "macos")]
+    { preview_builder = preview_builder.arg("--single-process"); }
+
+    let browser_config = preview_builder
         .build()
         .map_err(|e| format!("BrowserConfig error: {e}"))?;
 
