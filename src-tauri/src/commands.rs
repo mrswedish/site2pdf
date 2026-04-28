@@ -101,6 +101,7 @@ pub async fn open_preview_browser(
     let browser_config = BrowserConfig::builder()
         .chrome_executable(&chromium)
         .arg("--no-sandbox")
+        .arg("--disable-gpu")
         .arg("--disable-dev-shm-usage")
         .arg(format!("--user-data-dir={}", profile_dir.display()))
         .build()
