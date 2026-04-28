@@ -73,6 +73,24 @@ pub fn open_file(path: String) -> Result<(), String> {
     opener::open(&path).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn read_url_file(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let path = app
+        .dialog()
+        .file()
+        .add_filter("Textfil", &["txt"])
+        .blocking_pick_file();
+    match path {
+        None => Ok(None),
+        Some(fp) => {
+            let p = fp.into_path().map_err(|e| e.to_string())?;
+            let content = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+            Ok(Some(content))
+        }
+    }
+}
+
 // ── Preview browser ───────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -153,6 +171,7 @@ pub async fn start_crawl(
     output_path: String,
     max_depth: Option<u32>,
     blocked_patterns: Vec<String>,
+    url_list: Option<Vec<String>>,
 ) -> Result<(), String> {
     let chromium = chromium_manager::chromium_binary_path(&app).map_err(|e| e.to_string())?;
     if !chromium.exists() {
@@ -176,6 +195,7 @@ pub async fn start_crawl(
         chromium_path: chromium,
         blocked_patterns,
         user_data_dir,
+        url_list,
     };
 
     let token = CancellationToken::new();

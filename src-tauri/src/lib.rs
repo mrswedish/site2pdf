@@ -21,6 +21,7 @@ pub fn run() {
             commands::cancel_crawl,
             commands::open_preview_browser,
             commands::close_preview_browser,
+            commands::read_url_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

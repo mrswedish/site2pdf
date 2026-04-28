@@ -21,6 +21,13 @@ const inputError        = document.getElementById('input-error');
 const manualCookiesCb   = document.getElementById('manual-cookies');
 const blockedInput      = document.getElementById('blocked-patterns');
 
+const modeCrawlBtn  = document.getElementById('mode-crawl');
+const modeListBtn   = document.getElementById('mode-list');
+const crawlFields   = document.getElementById('crawl-fields');
+const listFields    = document.getElementById('list-fields');
+const urlListInput  = document.getElementById('url-list');
+const loadUrlsBtn   = document.getElementById('load-urls-btn');
+
 const prepareStartBtn   = document.getElementById('prepare-start-btn');
 const prepareCancelBtn  = document.getElementById('prepare-cancel-btn');
 
@@ -36,6 +43,31 @@ const restartBtn    = document.getElementById('restart-btn');
 let lastOutputPath = '';
 let unlisten = [];
 let pendingCrawlParams = null;
+let currentMode = 'crawl'; // 'crawl' | 'list'
+
+// ── Mode toggle ───────────────────────────────────────────────────────────────
+function setMode(mode) {
+  currentMode = mode;
+  const isCrawl = mode === 'crawl';
+  modeCrawlBtn.classList.toggle('active', isCrawl);
+  modeListBtn.classList.toggle('active', !isCrawl);
+  crawlFields.classList.toggle('hidden', !isCrawl);
+  listFields.classList.toggle('hidden', isCrawl);
+  updateStartBtn();
+}
+
+modeCrawlBtn.addEventListener('click', () => setMode('crawl'));
+modeListBtn.addEventListener('click', () => setMode('list'));
+
+loadUrlsBtn.addEventListener('click', async () => {
+  const content = await invoke('read_url_file');
+  if (content != null) {
+    urlListInput.value = content.trim();
+    updateStartBtn();
+  }
+});
+
+urlListInput.addEventListener('input', updateStartBtn);
 
 // ── Boot: check if Chromium is already present ────────────────────────────────
 async function boot() {
@@ -66,7 +98,11 @@ setupStartBtn.addEventListener('click', async () => {
 
 // ── Input phase ───────────────────────────────────────────────────────────────
 function updateStartBtn() {
-  startBtn.disabled = !(urlInput.value.trim().startsWith('http') && outputInput.value.trim());
+  const hasOutput = !!outputInput.value.trim();
+  const inputReady = currentMode === 'crawl'
+    ? urlInput.value.trim().startsWith('http')
+    : urlListInput.value.trim().split('\n').some(l => l.trim().startsWith('http'));
+  startBtn.disabled = !(inputReady && hasOutput);
   inputError.classList.add('hidden');
 }
 
@@ -82,20 +118,33 @@ browseBtn.addEventListener('click', async () => {
 });
 
 startBtn.addEventListener('click', async () => {
-  const url = urlInput.value.trim();
   const outputPath = outputInput.value.trim();
-  if (!url || !outputPath) return;
+  if (!outputPath) return;
 
-  const maxDepthVal = maxDepthInput.value.trim();
-  const maxDepth = maxDepthVal === '' ? null : parseInt(maxDepthVal, 10);
   const blockedPatterns = blockedInput.value
     .split('\n')
     .map(s => s.trim())
     .filter(s => s.length > 0);
 
+  if (currentMode === 'list') {
+    const urlList = urlListInput.value
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s => s.startsWith('http'));
+    if (urlList.length === 0) return;
+    beginCrawl({ url: '', outputPath, maxDepth: null, blockedPatterns, urlList });
+    return;
+  }
+
+  const url = urlInput.value.trim();
+  if (!url) return;
+
+  const maxDepthVal = maxDepthInput.value.trim();
+  const maxDepth = maxDepthVal === '' ? null : parseInt(maxDepthVal, 10);
+
   if (manualCookiesCb.checked) {
     // Open a visible browser so the user can handle cookie banners manually
-    pendingCrawlParams = { url, outputPath, maxDepth, blockedPatterns };
+    pendingCrawlParams = { url, outputPath, maxDepth, blockedPatterns, urlList: null };
     try {
       await invoke('open_preview_browser', { url });
       showPhase('prepare');
@@ -106,12 +155,12 @@ startBtn.addEventListener('click', async () => {
   }
 
   // Direct crawl (no manual cookie handling)
-  beginCrawl({ url, outputPath, maxDepth, blockedPatterns });
+  beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList: null });
 });
 
 // ── Prepare phase ─────────────────────────────────────────────────────────────
 prepareStartBtn.addEventListener('click', () => {
-  beginCrawl(pendingCrawlParams);
+  beginCrawl({ ...pendingCrawlParams });
   pendingCrawlParams = null;
 });
 
@@ -122,10 +171,10 @@ prepareCancelBtn.addEventListener('click', async () => {
 });
 
 // ── Start the actual crawl ────────────────────────────────────────────────────
-async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns }) {
+async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList = null }) {
   showPhase('progress');
   progressBar.style.width = '0%';
-  progressLabel.textContent = 'Startar krypning…';
+  progressLabel.textContent = urlList ? 'Bearbetar URL-lista…' : 'Startar krypning…';
   progressUrl.textContent = '';
 
   unlisten.push(await listen('crawl-progress', ({ payload: p }) => {
@@ -150,7 +199,7 @@ async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns }) {
   }));
 
   try {
-    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns });
+    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns, urlList });
   } catch (err) {
     cleanup();
     showPhase('input');

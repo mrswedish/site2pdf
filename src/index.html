@@ -24,23 +24,44 @@
     <div id="phase-input" class="hidden">
       <h1>site2PDF</h1>
 
-      <label for="url">URL att hämta</label>
-      <input
-        type="url"
-        id="url"
-        placeholder="https://docs.example.com/guide/"
-        autocomplete="off"
-        spellcheck="false"
-      />
+      <div class="mode-toggle">
+        <button id="mode-crawl" class="mode-btn active" type="button">Webbkrypning</button>
+        <button id="mode-list" class="mode-btn" type="button">URL-lista</button>
+      </div>
+
+      <!-- Webbkrypning -->
+      <div id="crawl-fields">
+        <label for="url">URL att hämta</label>
+        <input
+          type="url"
+          id="url"
+          placeholder="https://docs.example.com/guide/"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <label for="max-depth">Maxdjup <span class="hint">(0 = bara startsidan)</span></label>
+        <input type="number" id="max-depth" min="0" max="99" value="3" />
+      </div>
+
+      <!-- URL-lista -->
+      <div id="list-fields" class="hidden">
+        <label>URL-lista <span class="hint">(en URL per rad)</span></label>
+        <div class="path-row" style="margin-bottom:6px">
+          <button id="load-urls-btn" type="button">Välj .txt-fil…</button>
+        </div>
+        <textarea
+          id="url-list"
+          rows="8"
+          placeholder="https://example.com/sida1&#10;https://example.com/sida2"
+          spellcheck="false"
+        ></textarea>
+      </div>
 
       <label for="output-path">Spara PDF till</label>
       <div class="path-row">
         <input type="text" id="output-path" placeholder="C:\Users\...\output.pdf" readonly />
         <button id="browse-btn" type="button">Bläddra…</button>
       </div>
-
-      <label for="max-depth">Maxdjup <span class="hint">(0 = bara startsidan)</span></label>
-      <input type="number" id="max-depth" min="0" max="99" value="3" />
 
       <details id="advanced">
         <summary>Avancerat</summary>

@@ -20,6 +20,8 @@ pub struct CrawlConfig {
     /// If set, Chromium is launched with this user-data-dir to inherit cookies
     /// from a prior headed session (manual cookie banner handling).
     pub user_data_dir: Option<PathBuf>,
+    /// If set, crawl exactly these URLs in order — no BFS link discovery.
+    pub url_list: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -64,16 +66,43 @@ pub async fn crawl(
         while let Some(_) = handler.next().await {}
     });
 
-    let start_url = Url::parse(&config.url).context("Invalid start URL")?;
-    let prefix = build_prefix(&config.url);
+    let (start_url, prefix) = if config.url_list.is_none() {
+        let su = Url::parse(&config.url).context("Invalid start URL")?;
+        let pf = build_prefix(&config.url);
+        (su, pf)
+    } else {
+        (Url::parse("http://localhost").unwrap(), String::new())
+    };
 
     let mut queue: VecDeque<(String, u32)> = VecDeque::new();
-    queue.push_back((config.url.clone(), 0));
-
     let mut visited: HashSet<String> = HashSet::new();
-    visited.insert(normalize_url(&config.url));
+
+    if let Some(list) = &config.url_list {
+        for url in list {
+            let norm = normalize_url(url);
+            if visited.insert(norm) {
+                queue.push_back((url.clone(), u32::MAX));
+            }
+        }
+    } else {
+        queue.push_back((config.url.clone(), 0));
+        visited.insert(normalize_url(&config.url));
+    }
 
     let mut pdf_pages: Vec<Vec<u8>> = Vec::new();
+
+    // A single persistent page navigated to each URL in turn.
+    // This avoids Target.createTarget (new tab) which hangs under --single-process on macOS.
+    let page = match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        browser.new_page("about:blank"),
+    )
+    .await
+    {
+        Ok(Ok(p)) => p,
+        Ok(Err(e)) => return Err(anyhow::anyhow!("Failed to create initial page: {e}")),
+        Err(_) => return Err(anyhow::anyhow!("Timeout creating initial page")),
+    };
 
     while let Some((url, depth)) = queue.pop_front() {
         if cancel.is_cancelled() {
@@ -94,16 +123,16 @@ pub async fn crawl(
         'retry: loop {
             attempt += 1;
 
-            // Open page with a 30-second timeout
-            let page = match tokio::time::timeout(
+            // Navigate the persistent page to the target URL
+            match tokio::time::timeout(
                 std::time::Duration::from_secs(30),
-                browser.new_page(&*url),
+                page.goto(url.as_str()),
             )
             .await
             {
-                Ok(Ok(p)) => p,
+                Ok(Ok(_)) => {}
                 Ok(Err(e)) => {
-                    eprintln!("Failed to open {url} (attempt {attempt}): {e}");
+                    eprintln!("Failed to navigate to {url} (attempt {attempt}): {e}");
                     if attempt < 2 {
                         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                         continue 'retry;
@@ -111,14 +140,14 @@ pub async fn crawl(
                     break 'retry;
                 }
                 Err(_) => {
-                    eprintln!("Timeout opening {url} (attempt {attempt})");
+                    eprintln!("Timeout navigating to {url} (attempt {attempt})");
                     if attempt < 2 {
                         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                         continue 'retry;
                     }
                     break 'retry;
                 }
-            };
+            }
 
             // Wait for document to be ready
             wait_for_ready(&page).await;
@@ -137,7 +166,6 @@ pub async fn crawl(
                 Ok(Err(e)) => {
                     eprintln!("PDF failed for {url} (attempt {attempt}): {e}");
                     if attempt < 2 {
-                        let _ = page.close().await;
                         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                         continue 'retry;
                     }
@@ -145,20 +173,19 @@ pub async fn crawl(
                 Err(_) => {
                     eprintln!("PDF timeout for {url} (attempt {attempt})");
                     if attempt < 2 {
-                        let _ = page.close().await;
                         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                         continue 'retry;
                     }
                 }
             }
 
-            // Extract links if we haven't hit max depth
-            let should_follow = config.max_depth.map_or(true, |max| depth < max);
+            // Extract links if we haven't hit max depth (never in url_list mode)
+            let should_follow = config.url_list.is_none()
+                && config.max_depth.map_or(true, |max| depth < max);
             if should_follow {
                 page_links = extract_links(&page, &start_url, &prefix).await;
             }
 
-            let _ = page.close().await;
             break 'retry;
         }
 
@@ -178,6 +205,7 @@ pub async fn crawl(
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
+    let _ = page.close().await;
     browser.close().await?;
 
     if let Some(dir) = &config.user_data_dir {
