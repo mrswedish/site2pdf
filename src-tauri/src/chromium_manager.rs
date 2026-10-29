@@ -43,14 +43,77 @@ pub fn chromium_dir(app: &AppHandle) -> Result<PathBuf> {
         .map(|d| d.join("chromium"))
 }
 
-pub fn chromium_binary_path(app: &AppHandle) -> Result<PathBuf> {
+/// Where the downloaded Chrome for Testing lives (inside the app data dir).
+fn downloaded_binary_path(app: &AppHandle) -> Result<PathBuf> {
     Ok(chromium_dir(app)?.join(chrome_binary_rel()))
 }
 
+/// Browsers installed on the machine that can drive the crawl (all Chromium-based).
+fn system_browser_candidates() -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut out = Vec::new();
+        for var in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"] {
+            if let Some(base) = std::env::var_os(var) {
+                let base = PathBuf::from(base);
+                out.push(base.join("Google/Chrome/Application/chrome.exe"));
+                out.push(base.join("Microsoft/Edge/Application/msedge.exe"));
+            }
+        }
+        out
+    }
+    #[cfg(target_os = "macos")]
+    {
+        [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/microsoft-edge"]
+            .iter()
+            .map(PathBuf::from)
+            .collect()
+    }
+}
+
+/// Browser lookup order, first existing wins:
+/// 1. `S2P_CHROME` environment variable (path to a Chrome/Chromium/Edge executable)
+/// 2. A `chromium` folder next to the app executable (portable bundle:
+///    `chromium/chrome-win64/chrome.exe`, same layout as the download)
+/// 3. The Chrome for Testing downloaded earlier into the app data dir
+/// 4. Chrome / Edge installed on the system
+pub fn find_browser(app: &AppHandle) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(p) = std::env::var_os("S2P_CHROME") {
+        candidates.push(PathBuf::from(p));
+    }
+    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
+        candidates.push(dir.join("chromium").join(chrome_binary_rel()));
+    }
+    if let Ok(p) = downloaded_binary_path(app) {
+        candidates.push(p);
+    }
+    candidates.extend(system_browser_candidates());
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Browser to launch. Falls back to the (possibly not yet downloaded) app-data path,
+/// so callers that check `.exists()` get a sensible "not installed" answer.
+pub fn chromium_binary_path(app: &AppHandle) -> Result<PathBuf> {
+    match find_browser(app) {
+        Some(p) => Ok(p),
+        None => downloaded_binary_path(app),
+    }
+}
+
 pub fn is_chromium_present(app: &AppHandle) -> bool {
-    chromium_binary_path(app)
-        .map(|p| p.exists())
-        .unwrap_or(false)
+    find_browser(app).is_some()
 }
 
 /// Ensures Chromium is present; downloads if not.
@@ -59,10 +122,10 @@ pub async fn ensure_chromium(
     app: &AppHandle,
     progress_tx: mpsc::UnboundedSender<DownloadProgress>,
 ) -> Result<PathBuf> {
-    let binary = chromium_binary_path(app)?;
-    if binary.exists() {
-        return Ok(binary);
+    if let Some(found) = find_browser(app) {
+        return Ok(found);
     }
+    let binary = downloaded_binary_path(app)?;
 
     let dir = chromium_dir(app)?;
     std::fs::create_dir_all(&dir).context("Failed to create chromium dir")?;

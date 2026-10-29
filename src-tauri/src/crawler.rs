@@ -252,7 +252,12 @@ async fn launch_browser(
     // process. --single-process eliminates all forking by running renderer,
     // GPU and network in the same OS process.
     #[cfg(target_os = "macos")]
-    { browser_builder = browser_builder.arg("--single-process"); }
+    {
+        // Escape hatch: a regular installed Chrome can hang on page creation with this flag.
+        if std::env::var_os("S2P_NO_SINGLE").is_none() {
+            browser_builder = browser_builder.arg("--single-process");
+        }
+    }
 
     if let Some(dir) = user_data_dir {
         browser_builder = browser_builder.arg(format!("--user-data-dir={}", dir.display()));

@@ -13,7 +13,16 @@ Gå till [Releases](https://github.com/mrswedish/site2pdf/releases) och välj:
 | `site2pdf-portable.exe` | Portabel Windows-version, ingen installation behövs |
 | `site2pdf-setup.exe` | Installationsprogram för Windows |
 
-Första gången appen startas laddas **Chrome for Testing** (~170 MB) ned och sparas i appens datamapp. Det sker bara en gång och kräver internetåtkomst till `googlechromelabs.github.io`.
+### Vilken webbläsare används?
+
+Appen renderar sidorna med en Chromium-baserad webbläsare och letar i denna ordning:
+
+1. Miljövariabeln `S2P_CHROME` (sökväg till en Chrome-/Chromium-/Edge-fil)
+2. En mapp `chromium` **bredvid `.exe`-filen**, med samma struktur som nedladdningen, t.ex. `chromium\chrome-win64\chrome.exe` (för helt fristående/offline-användning)
+3. Chrome for Testing som tidigare laddats ned till appens datamapp
+4. **Redan installerad Google Chrome eller Microsoft Edge** (Edge finns på alla Windows 10/11-datorer)
+
+Hittas ingen av dem laddas **Chrome for Testing** (~170 MB) ned första gången appen startas, från `googlechromelabs.github.io`. På datorer med Edge eller Chrome behövs alltså ingen nedladdning alls.
 
 ## Användning
 
@@ -64,7 +73,7 @@ cargo tauri build    # release-bygge
 Windows-releaser byggs automatiskt av GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) när en tagg `v*` pushas (tar ca 20 minuter).
 
 ```bash
-git tag v0.3.0 && git push origin v0.3.0
+git tag v0.3.1 && git push origin v0.3.1
 ```
 
 Tester:
@@ -89,7 +98,7 @@ src-tauri/src/
 
 ## Kända begränsningar
 
-- På macOS körs Chromium med `--single-process` för att undvika krascher; det är långsammare men stabilare.
+- På macOS körs Chromium med `--single-process` för att undvika krascher. Hänger sig en vanlig installerad Chrome vid start, sätt miljövariabeln `S2P_NO_SINGLE=1`.
 - Sidor som kräver inloggning kräver läget *Hantera kakbanners manuellt* (logga in i det öppnade fönstret).
 - Förhandsgranskningen av länkar är ett urval; länkar som bara finns på ej skannade sidor kan missas.
 
