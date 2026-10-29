@@ -73,8 +73,16 @@
           spellcheck="false"
         ></textarea>
         <label class="checkbox-row">
+          <input type="checkbox" id="use-sitemap" checked />
+          <span>Hitta undersidor via sitemap.xml <span class="hint">(följer inte länkar på sidorna; faller tillbaka på länkföljning om sitemap saknas)</span></span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="main-only" checked />
+          <span>Bara huvudinnehåll <span class="hint">(utan menyer, sidopaneler och filter; fäller ut dragspel)</span></span>
+        </label>
+        <label class="checkbox-row">
           <input type="checkbox" id="manual-cookies" />
-          <span>Hantera kakbanners manuellt <span class="hint">(öppnar webbläsaren)</span></span>
+          <span>Hantera kakbanners manuellt <span class="hint">(behövs normalt inte &ndash; kakor godkänns automatiskt)</span></span>
         </label>
       </details>
 

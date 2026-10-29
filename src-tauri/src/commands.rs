@@ -172,6 +172,8 @@ pub async fn start_crawl(
     max_depth: Option<u32>,
     blocked_patterns: Vec<String>,
     url_list: Option<Vec<String>>,
+    use_sitemap: Option<bool>,
+    main_only: Option<bool>,
 ) -> Result<(), String> {
     let chromium = chromium_manager::chromium_binary_path(&app).map_err(|e| e.to_string())?;
     if !chromium.exists() {
@@ -196,6 +198,8 @@ pub async fn start_crawl(
         blocked_patterns,
         user_data_dir,
         url_list,
+        use_sitemap: use_sitemap.unwrap_or(false),
+        main_only: main_only.unwrap_or(false),
     };
 
     let token = CancellationToken::new();

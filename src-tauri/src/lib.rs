@@ -2,6 +2,7 @@ mod chromium_manager;
 mod commands;
 mod crawler;
 mod pdf;
+mod sitemap;
 
 use commands::{CrawlState, PreviewState};
 

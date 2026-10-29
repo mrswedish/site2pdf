@@ -22,6 +22,11 @@ pub struct CrawlConfig {
     pub user_data_dir: Option<PathBuf>,
     /// If set, crawl exactly these URLs in order — no BFS link discovery.
     pub url_list: Option<Vec<String>>,
+    /// Discover subpages via sitemap.xml (under the start URL's path) instead of
+    /// following links. Falls back to link-following if no sitemap is usable.
+    pub use_sitemap: bool,
+    /// Strip menus, sidebars, filters etc. and keep only the main content.
+    pub main_only: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -37,6 +42,22 @@ pub async fn crawl(
     progress_tx: mpsc::UnboundedSender<Progress>,
     cancel: CancellationToken,
 ) -> Result<Vec<Vec<u8>>> {
+    let mut config = config;
+    if config.use_sitemap && config.url_list.is_none() {
+        match crate::sitemap::resolve(&config.url).await {
+            Ok(list) if !list.is_empty() => {
+                let list: Vec<String> = list
+                    .into_iter()
+                    .filter(|u| !is_blocked(u, &config.blocked_patterns))
+                    .collect();
+                eprintln!("Sitemap: {} pages under {}", list.len(), config.url);
+                config.url_list = Some(list);
+            }
+            Ok(_) => eprintln!("Sitemap: nothing usable, falling back to link-following"),
+            Err(e) => eprintln!("Sitemap failed ({e}), falling back to link-following"),
+        }
+    }
+
     let mut browser_builder = BrowserConfig::builder()
         .chrome_executable(&config.chromium_path)
         .arg("--headless")
@@ -154,6 +175,12 @@ pub async fn crawl(
 
             // Dismiss cookie consent banners before generating PDF
             dismiss_cookie_banners(&page).await;
+
+            // Expand collapsed sections and (optionally) keep only the main content
+            expand_collapsed(&page).await;
+            if config.main_only {
+                isolate_main_content(&page).await;
+            }
 
             // Export page to PDF (30-second timeout)
             match tokio::time::timeout(
@@ -402,6 +429,72 @@ async fn dismiss_cookie_banners(page: &chromiumoxide::Page) {
 
     // Let any CSS transitions finish before printing.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+}
+
+/// Open accordions / "details" so their content ends up in the PDF.
+async fn expand_collapsed(page: &chromiumoxide::Page) {
+    let script = r#"
+        (async function() {
+            document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
+            const heads = document.querySelectorAll(
+                '[aria-expanded="false"]:not(nav *):not(aside *):not([aria-haspopup])'
+            );
+            heads.forEach(h => { try { h.click(); } catch (e) {} });
+            return heads.length;
+        })()
+    "#;
+    if let Ok(v) = page.evaluate(script).await {
+        if v.into_value::<i64>().unwrap_or(0) > 0 {
+            // Accordion content is sometimes rendered/loaded lazily after the click.
+            tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        }
+    }
+}
+
+/// Hide everything except the page's main content element (`<main>`, `[role=main]`,
+/// `#main`, `#content` or `<article>`), and drop interactive chrome inside it
+/// (sidebars, navigation, filters, buttons). No-op if no main element is found.
+async fn isolate_main_content(page: &chromiumoxide::Page) {
+    let script = r#"
+        (function() {
+            const main = document.querySelector('main, [role="main"], #main, #content, article');
+            if (!main) return false;
+            const css = [];
+            // Hide all siblings along the path body -> main
+            let node = main;
+            while (node && node !== document.body) {
+                const parent = node.parentElement;
+                if (!parent) break;
+                for (const sib of parent.children) {
+                    if (sib !== node && !/^(SCRIPT|STYLE|LINK)$/.test(sib.tagName)) {
+                        sib.setAttribute('data-s2pdf-hide', '');
+                    }
+                }
+                node = parent;
+            }
+            // Chrome inside main: always hide structural/interactive elements...
+            main.querySelectorAll('aside, nav, form, button, [id="printIcon"]')
+                .forEach(el => el.setAttribute('data-s2pdf-hide', ''));
+            // ...and class-matched widgets, unless they wrap real content (e.g. accordions
+            // are styled "filter-item-container").
+            main.querySelectorAll(
+                '[class*="filter"], [class*="breadcrumb"], [class*="feedback"], ' +
+                '[class*="related"], [class*="share"]'
+            ).forEach(el => {
+                if (!el.querySelector('article, h2, h3, table') && el.tagName !== 'ARTICLE') {
+                    el.setAttribute('data-s2pdf-hide', '');
+                }
+            });
+            const style = document.createElement('style');
+            style.textContent =
+                '[data-s2pdf-hide]{display:none !important}' +
+                'main, #main{margin:0 !important;padding:0 !important;max-width:none !important}';
+            document.head.appendChild(style);
+            return true;
+        })()
+    "#;
+    let _ = page.evaluate(script).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 }
 
 async fn extract_links(
