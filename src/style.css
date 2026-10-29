@@ -160,6 +160,23 @@ textarea {
 
 textarea:focus { border-color: var(--accent); }
 
+.secondary-btn {
+  margin-top: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.secondary-btn:hover:not(:disabled) { border-color: var(--accent); }
+.secondary-btn:disabled { opacity: 0.5; cursor: default; }
+
+#preview-status { margin-top: 8px; }
+.link-group { align-items: flex-start; }
+.link-group .sample { word-break: break-all; }
+
 .mode-toggle {
   display: flex;
   gap: 0;

@@ -22,6 +22,11 @@ const manualCookiesCb   = document.getElementById('manual-cookies');
 const useSitemapCb      = document.getElementById('use-sitemap');
 const mainOnlyCb        = document.getElementById('main-only');
 const followDocsCb      = document.getElementById('follow-docs');
+const docOptions        = document.getElementById('doc-options');
+const docPatternsInput  = document.getElementById('doc-patterns');
+const previewLinksBtn   = document.getElementById('preview-links-btn');
+const previewStatus     = document.getElementById('preview-status');
+const linkGroupsEl      = document.getElementById('link-groups');
 const blockedInput      = document.getElementById('blocked-patterns');
 
 const modeCrawlBtn  = document.getElementById('mode-crawl');
@@ -98,6 +103,83 @@ setupStartBtn.addEventListener('click', async () => {
     setupStartBtn.disabled = false;
   }
 });
+
+// ── Document link patterns ────────────────────────────────────────────────────
+const DEFAULT_DOC_PATTERN = '*/dokument/*';
+
+function readDocPatterns() {
+  const lines = docPatternsInput.value.split('\n').map(s => s.trim()).filter(Boolean);
+  return lines.length ? lines : [DEFAULT_DOC_PATTERN];
+}
+
+function writeDocPatterns(lines) {
+  docPatternsInput.value = lines.join('\n');
+}
+
+followDocsCb.addEventListener('change', () => {
+  docOptions.classList.toggle('hidden', !followDocsCb.checked);
+});
+
+previewLinksBtn.addEventListener('click', async () => {
+  const url = urlInput.value.trim();
+  if (!url.startsWith('http')) {
+    previewStatus.textContent = 'Fyll i start-URL först.';
+    previewStatus.classList.remove('hidden');
+    return;
+  }
+  previewLinksBtn.disabled = true;
+  linkGroupsEl.replaceChildren();
+  previewStatus.textContent = 'Startar förhandsgranskning…';
+  previewStatus.classList.remove('hidden');
+
+  const un = await listen('preview-links-progress', ({ payload: p }) => {
+    previewStatus.textContent = `Skannar sidor… ${p.done} / ${p.total}`;
+  });
+  try {
+    const groups = await invoke('preview_links', { url, useSitemap: useSitemapCb.checked });
+    renderLinkGroups(groups);
+  } catch (err) {
+    previewStatus.textContent = 'Kunde inte förhandsgranska: ' + String(err) + ' (du kan fortfarande skriva mönster manuellt).';
+  } finally {
+    un();
+    previewLinksBtn.disabled = false;
+  }
+});
+
+function renderLinkGroups(groups) {
+  linkGroupsEl.replaceChildren();
+  if (!groups.length) {
+    previewStatus.textContent = 'Inga ytterligare interna länkar hittades i huvudinnehållet.';
+    return;
+  }
+  previewStatus.textContent = 'Välj vilka typer av länkar som ska tas med som dokumentsidor:';
+  const current = new Set(readDocPatterns());
+  for (const g of groups) {
+    const row = document.createElement('label');
+    row.className = 'checkbox-row link-group';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = followDocsCb.checked && current.has(g.pattern);
+    cb.addEventListener('change', () => {
+      const lines = docPatternsInput.value.split('\n').map(s => s.trim()).filter(Boolean)
+        .filter(l => l !== g.pattern);
+      if (cb.checked) lines.push(g.pattern);
+      writeDocPatterns(lines);
+    });
+    const text = document.createElement('span');
+    const name = document.createElement('strong');
+    name.textContent = `${g.pattern} `;
+    const count = document.createElement('span');
+    count.className = 'hint';
+    count.textContent = `(${g.count} länkar) `;
+    const sample = document.createElement('span');
+    sample.className = 'hint sample';
+    sample.textContent = g.samples[0] || '';
+    text.append(name, count, document.createElement('br'), sample);
+    row.append(cb, text);
+    linkGroupsEl.append(row);
+  }
+}
 
 // ── Input phase ───────────────────────────────────────────────────────────────
 function updateStartBtn() {
@@ -181,7 +263,7 @@ prepareCancelBtn.addEventListener('click', async () => {
 async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList = null }) {
   const useSitemap = useSitemapCb.checked;
   const mainOnly = mainOnlyCb.checked;
-  const followDocuments = followDocsCb.checked;
+  const documentPatterns = followDocsCb.checked ? readDocPatterns() : [];
   showPhase('progress');
   progressBar.style.width = '0%';
   progressLabel.textContent = urlList ? 'Bearbetar URL-lista…' : 'Startar krypning…';
@@ -209,7 +291,7 @@ async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList 
   }));
 
   try {
-    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns, urlList, useSitemap, mainOnly, followDocuments });
+    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns, urlList, useSitemap, mainOnly, documentPatterns });
   } catch (err) {
     cleanup();
     showPhase('input');

@@ -1,5 +1,5 @@
 use crate::chromium_manager::{self, DownloadProgress};
-use crate::crawler::{crawl, CrawlConfig, Progress};
+use crate::crawler::{crawl, preview_links as crawler_preview_links, CrawlConfig, LinkGroup, Progress};
 use crate::pdf::merge_pdfs;
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use futures::StreamExt;
@@ -159,6 +159,26 @@ pub async fn close_preview_browser(
     Ok(())
 }
 
+// ── Link preview ──────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn preview_links(
+    app: AppHandle,
+    window: Window,
+    url: String,
+    use_sitemap: bool,
+) -> Result<Vec<LinkGroup>, String> {
+    let chromium = chromium_manager::chromium_binary_path(&app).map_err(|e| e.to_string())?;
+    if !chromium.exists() {
+        return Err("Chromium är inte installerat. Ladda ned det först.".into());
+    }
+    crawler_preview_links(chromium, url, use_sitemap, move |p| {
+        let _ = window.emit("preview-links-progress", &p);
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 // ── Crawl ─────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -174,7 +194,7 @@ pub async fn start_crawl(
     url_list: Option<Vec<String>>,
     use_sitemap: Option<bool>,
     main_only: Option<bool>,
-    follow_documents: Option<bool>,
+    document_patterns: Option<Vec<String>>,
 ) -> Result<(), String> {
     let chromium = chromium_manager::chromium_binary_path(&app).map_err(|e| e.to_string())?;
     if !chromium.exists() {
@@ -201,7 +221,7 @@ pub async fn start_crawl(
         url_list,
         use_sitemap: use_sitemap.unwrap_or(false),
         main_only: main_only.unwrap_or(false),
-        follow_documents: follow_documents.unwrap_or(false),
+        document_patterns: document_patterns.unwrap_or_default(),
     };
 
     let token = CancellationToken::new();

@@ -23,6 +23,7 @@ pub fn run() {
             commands::open_preview_browser,
             commands::close_preview_browser,
             commands::read_url_file,
+            commands::preview_links,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

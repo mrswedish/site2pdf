@@ -27,12 +27,13 @@ pub struct CrawlConfig {
     pub use_sitemap: bool,
     /// Strip menus, sidebars, filters etc. and keep only the main content.
     pub main_only: bool,
-    /// Also fetch same-host links to document pages (path contains `/dokument/`)
-    /// found in each page's main content. Documents are never crawled further.
-    pub follow_documents: bool,
+    /// Glob-style patterns (`*` wildcard, case-insensitive). Same-host links in each
+    /// page's main content matching any of these are fetched as document pages.
+    /// Empty = off. Documents are never crawled further.
+    pub document_patterns: Vec<String>,
 }
 
-/// Depth marker for document pages fetched via `follow_documents`.
+/// Depth marker for document pages fetched via `document_patterns`.
 const DOC_DEPTH: u32 = u32::MAX - 1;
 
 #[derive(Serialize, Clone)]
@@ -64,34 +65,7 @@ pub async fn crawl(
         }
     }
 
-    let mut browser_builder = BrowserConfig::builder()
-        .chrome_executable(&config.chromium_path)
-        .arg("--headless")
-        .arg("--disable-gpu")
-        .arg("--no-sandbox")
-        .arg("--disable-dev-shm-usage");
-
-    // macOS 26+ blocks Chrome's internal fork() calls from a multi-threaded
-    // process. --single-process eliminates all forking by running renderer,
-    // GPU and network in the same OS process.
-    #[cfg(target_os = "macos")]
-    { browser_builder = browser_builder.arg("--single-process"); }
-
-    if let Some(dir) = &config.user_data_dir {
-        browser_builder = browser_builder.arg(format!("--user-data-dir={}", dir.display()));
-    }
-
-    let browser_config = browser_builder
-        .build()
-        .map_err(|e| anyhow::anyhow!("BrowserConfig error: {e}"))?;
-
-    let (mut browser, mut handler) = Browser::launch(browser_config)
-        .await
-        .context("Failed to launch Chromium")?;
-
-    tokio::spawn(async move {
-        while let Some(_) = handler.next().await {}
-    });
+    let mut browser = launch_browser(&config.chromium_path, config.user_data_dir.as_deref()).await?;
 
     let (start_url, prefix) = if config.url_list.is_none() {
         let su = Url::parse(&config.url).context("Invalid start URL")?;
@@ -220,8 +194,8 @@ pub async fn crawl(
             if should_follow {
                 page_links = extract_links(&page, &start_url, &prefix).await;
             }
-            if config.follow_documents && depth != DOC_DEPTH {
-                doc_links = extract_document_links(&page).await;
+            if !config.document_patterns.is_empty() && depth != DOC_DEPTH {
+                doc_links = extract_document_links(&page, &config.document_patterns).await;
             }
 
             break 'retry;
@@ -260,6 +234,43 @@ pub async fn crawl(
     }
 
     Ok(pdf_pages)
+}
+
+/// Launch headless Chromium and drive its event handler in the background.
+async fn launch_browser(
+    chromium_path: &std::path::Path,
+    user_data_dir: Option<&std::path::Path>,
+) -> Result<Browser> {
+    let mut browser_builder = BrowserConfig::builder()
+        .chrome_executable(chromium_path)
+        .arg("--headless")
+        .arg("--disable-gpu")
+        .arg("--no-sandbox")
+        .arg("--disable-dev-shm-usage");
+
+    // macOS 26+ blocks Chrome's internal fork() calls from a multi-threaded
+    // process. --single-process eliminates all forking by running renderer,
+    // GPU and network in the same OS process.
+    #[cfg(target_os = "macos")]
+    { browser_builder = browser_builder.arg("--single-process"); }
+
+    if let Some(dir) = user_data_dir {
+        browser_builder = browser_builder.arg(format!("--user-data-dir={}", dir.display()));
+    }
+
+    let browser_config = browser_builder
+        .build()
+        .map_err(|e| anyhow::anyhow!("BrowserConfig error: {e}"))?;
+
+    let (browser, mut handler) = Browser::launch(browser_config)
+        .await
+        .context("Failed to launch Chromium")?;
+
+    tokio::spawn(async move {
+        while let Some(_) = handler.next().await {}
+    });
+
+    Ok(browser)
 }
 
 /// Returns true if `url` matches any of the glob patterns (only `*` wildcard supported).
@@ -517,8 +528,8 @@ async fn isolate_main_content(page: &chromiumoxide::Page) {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 }
 
-/// Same-host links to `/dokument/` pages inside the main content (not sidebars/menus).
-async fn extract_document_links(page: &chromiumoxide::Page) -> Vec<String> {
+/// All same-host http(s) links inside the main content (not sidebars/menus/headers/footers).
+async fn extract_main_links(page: &chromiumoxide::Page) -> Vec<String> {
     let script = r#"
         (function() {
             const root = document.querySelector('main, [role="main"], #main, #content') || document.body;
@@ -527,7 +538,7 @@ async fn extract_document_links(page: &chromiumoxide::Page) -> Vec<String> {
                 .map(a => a.href)
                 .filter(h => { try {
                     const u = new URL(h);
-                    return u.host === location.host && u.pathname.toLowerCase().includes('/dokument/');
+                    return (u.protocol === 'http:' || u.protocol === 'https:') && u.host === location.host;
                 } catch (e) { return false; } }));
         })()
     "#;
@@ -537,6 +548,121 @@ async fn extract_document_links(page: &chromiumoxide::Page) -> Vec<String> {
         .and_then(|v| v.into_value::<String>().ok())
         .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
         .unwrap_or_default()
+}
+
+/// Main-content links matching one of the document `patterns` (case-insensitive globs).
+async fn extract_document_links(page: &chromiumoxide::Page, patterns: &[String]) -> Vec<String> {
+    extract_main_links(page)
+        .await
+        .into_iter()
+        .filter(|l| matches_any_ci(l, patterns))
+        .collect()
+}
+
+fn matches_any_ci(url: &str, patterns: &[String]) -> bool {
+    let url = url.to_lowercase();
+    patterns.iter().any(|p| glob_match(&url, &p.to_lowercase()))
+}
+
+/// A candidate group of same-host links found while previewing, e.g. `*/dokument/*`.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkGroup {
+    pub pattern: String,
+    pub count: usize,
+    pub samples: Vec<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewProgress {
+    pub done: usize,
+    pub total: usize,
+}
+
+const PREVIEW_MAX_PAGES: usize = 9; // start page + 8 sampled pages
+
+/// Scan the start page plus a spread sample of its sitemap subpages and group the
+/// same-host links in their main content by first path segment, so the user can pick
+/// which kinds of links should be treated as documents.
+pub async fn preview_links(
+    chromium_path: PathBuf,
+    url: String,
+    use_sitemap: bool,
+    progress: impl Fn(PreviewProgress),
+) -> Result<Vec<LinkGroup>> {
+    let start = Url::parse(&url).context("Invalid start URL")?;
+    let known: Vec<String> = if use_sitemap {
+        crate::sitemap::resolve(&url).await.unwrap_or_default()
+    } else {
+        vec![]
+    };
+
+    // Start page + evenly spread sample of the other sitemap pages
+    let mut scan: Vec<String> = vec![url.clone()];
+    let others: Vec<&String> = known.iter().skip(1).collect();
+    let want = PREVIEW_MAX_PAGES.saturating_sub(1).min(others.len());
+    for i in 0..want {
+        scan.push(others[i * others.len() / want].clone());
+    }
+
+    let mut browser = launch_browser(&chromium_path, None).await?;
+    let page = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        browser.new_page("about:blank"),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Timeout creating initial page"))?
+    .map_err(|e| anyhow::anyhow!("Failed to create initial page: {e}"))?;
+
+    let prefix = build_prefix(&url);
+    let skip: HashSet<String> = known.iter().map(|u| normalize_url(u)).collect();
+    let mut by_path: std::collections::BTreeMap<String, (String, String)> = Default::default(); // key -> (group, url)
+
+    for (i, u) in scan.iter().enumerate() {
+        progress(PreviewProgress { done: i, total: scan.len() });
+        let nav = tokio::time::timeout(std::time::Duration::from_secs(30), page.goto(u.as_str())).await;
+        if !matches!(nav, Ok(Ok(_))) {
+            continue;
+        }
+        wait_for_ready(&page).await;
+        dismiss_cookie_banners(&page).await;
+        expand_collapsed(&page).await;
+
+        for link in extract_main_links(&page).await {
+            let Ok(lu) = Url::parse(&link) else { continue };
+            if lu.host_str() != start.host_str() {
+                continue;
+            }
+            let norm = normalize_url(&link);
+            // Already part of the crawl (start page, sitemap pages, or under the start path)
+            if skip.contains(&norm) || (link.starts_with(&prefix) && use_sitemap) || norm == normalize_url(&url) {
+                continue;
+            }
+            let Some(seg) = lu.path_segments().and_then(|mut s| s.next()).filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            // Dedupe on host+path (queries like pageId/blockId vary for the same document)
+            let key = normalize_url(link.split('?').next().unwrap_or(&link));
+            by_path.entry(key).or_insert((format!("*/{}/*", seg.to_lowercase()), link));
+        }
+    }
+    progress(PreviewProgress { done: scan.len(), total: scan.len() });
+
+    let _ = page.close().await;
+    let _ = browser.close().await;
+
+    let mut groups: std::collections::BTreeMap<String, LinkGroup> = Default::default();
+    for (_, (pattern, link)) in by_path {
+        let g = groups.entry(pattern.clone()).or_insert(LinkGroup { pattern, count: 0, samples: vec![] });
+        g.count += 1;
+        if g.samples.len() < 3 {
+            g.samples.push(link);
+        }
+    }
+    let mut out: Vec<LinkGroup> = groups.into_values().collect();
+    out.sort_by(|a, b| b.count.cmp(&a.count).then(a.pattern.cmp(&b.pattern)));
+    Ok(out)
 }
 
 async fn extract_links(
@@ -584,4 +710,31 @@ async fn extract_links(
         }
     }
     links
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn document_patterns_match_case_insensitively() {
+        let p = vec!["*/dokument/*".to_string(), "*/files/*.pdf".to_string()];
+        assert!(matches_any_ci("https://a.se/Dokument/evo/1?x=1", &p));
+        assert!(matches_any_ci("https://a.se/files/rutin.PDF", &p));
+        assert!(!matches_any_ci("https://a.se/files/rutin.docx", &p));
+        assert!(!matches_any_ci("https://a.se/nyheter/1", &p));
+        assert!(!matches_any_ci("https://a.se/dokument/1", &[]));
+    }
+
+    #[tokio::test]
+    #[ignore = "network + local Chromium (set S2P_CHROME)"]
+    async fn preview_rjl() {
+        let chrome = std::env::var("S2P_CHROME").expect("S2P_CHROME");
+        let u = "https://folkhalsaochsjukvard.rjl.se/vardstod/fakta---allmant-kliniskt-kunskapsstod/";
+        let groups = preview_links(chrome.into(), u.into(), true, |p| eprintln!("{}/{}", p.done, p.total))
+            .await
+            .unwrap();
+        println!("{groups:#?}");
+        assert!(groups.iter().any(|g| g.pattern == "*/dokument/*"));
+    }
 }

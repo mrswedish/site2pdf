@@ -82,8 +82,15 @@
         </label>
         <label class="checkbox-row">
           <input type="checkbox" id="follow-docs" />
-          <span>Ta med dokumentsidor <span class="hint">(interna länkar till /dokument/… i huvudinnehållet; externa länkar följs aldrig)</span></span>
+          <span>Ta med dokumentsidor <span class="hint">(interna länkar i huvudinnehållet som matchar mönstren nedan; externa länkar följs aldrig)</span></span>
         </label>
+        <div id="doc-options" class="hidden">
+          <label for="doc-patterns">Dokumentlänk-mönster <span class="hint">(ett per rad, * = wildcard)</span></label>
+          <textarea id="doc-patterns" rows="2" spellcheck="false">*/dokument/*</textarea>
+          <button id="preview-links-btn" type="button" class="secondary-btn">Förhandsgranska länkar</button>
+          <p id="preview-status" class="hint hidden"></p>
+          <div id="link-groups"></div>
+        </div>
         <label class="checkbox-row">
           <input type="checkbox" id="manual-cookies" />
           <span>Hantera kakbanners manuellt <span class="hint">(behövs normalt inte &ndash; kakor godkänns automatiskt)</span></span>
