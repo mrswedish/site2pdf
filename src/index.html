@@ -57,7 +57,13 @@
         ></textarea>
       </div>
 
-      <label for="output-path">Spara PDF till</label>
+      <label for="output-format">Format</label>
+      <select id="output-format">
+        <option value="pdf">PDF</option>
+        <option value="markdown">Markdown (.md) &ndash; text, länkar och bildlänkar</option>
+      </select>
+
+      <label for="output-path">Spara till</label>
       <div class="path-row">
         <input type="text" id="output-path" placeholder="C:\Users\...\output.pdf" readonly />
         <button id="browse-btn" type="button">Bläddra…</button>
@@ -83,6 +89,10 @@
         <label class="checkbox-row">
           <input type="checkbox" id="main-only" checked />
           <span>Bara huvudinnehåll <span class="hint">(utan menyer, sidopaneler och filter; följer bara länkar i huvudinnehållet; fäller ut dragspel)</span></span>
+        </label>
+        <label class="checkbox-row hidden" id="include-images-row">
+          <input type="checkbox" id="include-images" checked />
+          <span>Ta med bildlänkar <span class="hint">(Markdown: <code>![alt](url)</code>; bilderna laddas inte ned)</span></span>
         </label>
         <label class="checkbox-row">
           <input type="checkbox" id="follow-docs" />

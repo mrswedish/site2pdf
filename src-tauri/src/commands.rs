@@ -1,5 +1,5 @@
 use crate::chromium_manager::{self, DownloadProgress};
-use crate::crawler::{crawl, preview_links as crawler_preview_links, CrawlConfig, LinkGroup, Progress};
+use crate::crawler::{crawl, OutputFormat, MD_PAGE_SEPARATOR, preview_links as crawler_preview_links, CrawlConfig, LinkGroup, Progress};
 use crate::pdf::merge_pdfs;
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use futures::StreamExt;
@@ -56,12 +56,14 @@ pub async fn download_chromium(app: AppHandle, window: Window) -> Result<(), Str
 // ── File dialog / open ────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn choose_save_path(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn choose_save_path(app: AppHandle, format: Option<String>) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
+    let markdown = OutputFormat::parse(format.as_deref()) == OutputFormat::Markdown;
+    let (label, ext) = if markdown { ("Markdown", "md") } else { ("PDF", "pdf") };
     let path = app
         .dialog()
         .file()
-        .add_filter("PDF", &["pdf"])
+        .add_filter(label, &[ext])
         .blocking_save_file();
     Ok(path
         .and_then(|fp| fp.into_path().ok())
@@ -196,6 +198,8 @@ pub async fn start_crawl(
     sitemap_only: Option<bool>,
     main_only: Option<bool>,
     document_patterns: Option<Vec<String>>,
+    output_format: Option<String>,
+    include_images: Option<bool>,
 ) -> Result<(), String> {
     let chromium = chromium_manager::chromium_binary_path(&app).map_err(|e| e.to_string())?;
     if !chromium.exists() {
@@ -224,6 +228,8 @@ pub async fn start_crawl(
         sitemap_only: sitemap_only.unwrap_or(false),
         main_only: main_only.unwrap_or(false),
         document_patterns: document_patterns.unwrap_or_default(),
+        output_format: OutputFormat::parse(output_format.as_deref()),
+        include_images: include_images.unwrap_or(true),
     };
 
     let token = CancellationToken::new();
@@ -248,7 +254,20 @@ pub async fn start_crawl(
         match crawl(config.clone(), tx, token).await {
             Ok(pdf_pages) => {
                 let total = pdf_pages.len();
-                match merge_pdfs(pdf_pages) {
+                let combined = if config.output_format == OutputFormat::Markdown {
+                    if pdf_pages.is_empty() {
+                        Err(anyhow::anyhow!("Inga sidor att spara"))
+                    } else {
+                        let parts: Vec<String> = pdf_pages
+                            .into_iter()
+                            .map(|b| String::from_utf8_lossy(&b).into_owned())
+                            .collect();
+                        Ok((parts.join(MD_PAGE_SEPARATOR) + "\n").into_bytes())
+                    }
+                } else {
+                    merge_pdfs(pdf_pages)
+                };
+                match combined {
                     Ok(merged) => match std::fs::write(&config.output_path, &merged) {
                         Ok(_) => {
                             let size = std::fs::metadata(&config.output_path)

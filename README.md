@@ -1,6 +1,6 @@
 # site2PDF
 
-Skrivbordsapp (Tauri + Rust) som hämtar en webbplats eller en lista med URL:er och sparar allt som **en sammanslagen PDF**. Sidorna renderas i en riktig Chromium-webbläsare, så JavaScript-tunga sidor fungerar.
+Skrivbordsapp (Tauri + Rust) som hämtar en webbplats eller en lista med URL:er och sparar allt som **en sammanslagen PDF** eller **en Markdown-fil** (`.md`). Sidorna renderas i en riktig Chromium-webbläsare, så JavaScript-tunga sidor fungerar.
 
 Byggd för att göra kunskapsstöd och dokumentationssajter läsbara offline, t.ex. [folkhalsaochsjukvard.rjl.se](https://folkhalsaochsjukvard.rjl.se/vardstod/fakta---allmant-kliniskt-kunskapsstod/).
 
@@ -33,6 +33,15 @@ Appen har två lägen:
 
 Välj var PDF:en ska sparas och klicka **Starta**.
 
+### Format: PDF eller Markdown
+
+Välj **Format** innan du väljer filnamn:
+
+- **PDF** – sidorna som de ser ut, sammanslagna i en fil.
+- **Markdown (.md)** – ett lättare textdokument. Rubriker, stycken, listor, tabeller, fetstil/kursiv och kodblock bevaras, **länkar behålls som `[text](url)`** (med fullständig adress) och **bilder som bildlänkar `![alt](url)`** (bilderna laddas inte ned; stäng av med *Ta med bildlänkar*). Varje sida får en rubrik och en rad `Källa: <url>`, och sidorna separeras med `---`. Dragspel fälls ut och kakbanners tas bort på samma sätt som för PDF.
+
+Markdown-läget följer samma regler som PDF för vilka sidor som hämtas och för *Bara huvudinnehåll* (rekommenderas även här).
+
 ### Hur undersidor hittas
 
 Appen följer länkar från startsidan ner till **Maxdjup** nivåer, men bara till sidor **under startsidans sökväg** (länkar till andra webbplatser följs aldrig). Är *Bara huvudinnehåll* på följs bara länkar i sidans huvudinnehåll, inte i menyer och sidopaneler.
@@ -51,6 +60,7 @@ Som standard används även **sitemap.xml** som komplement: appen läser `robots
 | Bara huvudinnehåll | på | Döljer menyer, sidopaneler, filter, feedback och knappar, och följer bara länkar i huvudinnehållet. Fäller ut dragspel (`aria-expanded`, `<details>`) så att texten kommer med. |
 | Ta med dokumentsidor | av | Hämtar även interna länkar i sidans huvudinnehåll som matchar mönstren nedan. Dokumentsidor följs inte vidare. |
 | Dokumentlänk-mönster | `*/dokument/*` | Ett mönster per rad, `*` = wildcard, skiftlägesokänsligt. Gäller bara länkar på samma sajt. |
+| Ta med bildlänkar | på | Bara för Markdown: tar med `![alt](url)`-referenser till bilder. |
 | Förhandsgranska länkar | – | Skannar startsidan och ett urval sitemap-sidor, grupperar interna länkar per sökvägsdel (t.ex. `*/dokument/*`, 46 länkar) och låter dig kryssa i vilka som ska med. Valen skrivs in i mönsterfältet, som du även kan redigera för hand. Tar ca 30–60 sekunder. |
 | Hantera kakbanners manuellt | av | Öppnar en synlig webbläsare där du själv godkänner kakor/loggar in. Behövs normalt inte. Kan webbläsaren inte öppnas körs automatisk kakhantering i stället. |
 
@@ -78,7 +88,7 @@ cargo tauri build    # release-bygge
 Windows-releaser byggs automatiskt av GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) när en tagg `v*` pushas (tar ca 20 minuter).
 
 ```bash
-git tag v0.3.2 && git push origin v0.3.2
+git tag v0.4.0 && git push origin v0.4.0
 ```
 
 Tester:
@@ -96,6 +106,7 @@ src/                    Frontend (HTML/JS/CSS, ingen build-steg)
 src-tauri/src/
   crawler.rs            Krypning, kakhantering, huvudinnehåll, länkförhandsvisning
   sitemap.rs            Hämtar och tolkar sitemap.xml
+  markdown.js           DOM → Markdown (körs i sidan, inkluderas i bygget)
   pdf.rs                Slår ihop PDF-sidor (lopdf)
   chromium_manager.rs   Laddar ned och hittar Chrome for Testing
   commands.rs           Tauri-kommandon som frontend anropar

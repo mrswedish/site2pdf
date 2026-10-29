@@ -9,6 +9,21 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OutputFormat {
+    Pdf,
+    Markdown,
+}
+
+impl OutputFormat {
+    pub fn parse(s: Option<&str>) -> Self {
+        match s {
+            Some("markdown") | Some("md") => OutputFormat::Markdown,
+            _ => OutputFormat::Pdf,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct CrawlConfig {
     pub url: String,
@@ -33,7 +48,14 @@ pub struct CrawlConfig {
     /// page's main content matching any of these are fetched as document pages.
     /// Empty = off. Documents are never crawled further.
     pub document_patterns: Vec<String>,
+    /// PDF (one merged file) or Markdown (text, links and image links).
+    pub output_format: OutputFormat,
+    /// Markdown only: keep `![alt](url)` image references.
+    pub include_images: bool,
 }
+
+/// Separator between pages in the Markdown output.
+pub const MD_PAGE_SEPARATOR: &str = "\n\n---\n\n";
 
 /// Depth marker for document pages fetched via `document_patterns`.
 const DOC_DEPTH: u32 = u32::MAX - 1;
@@ -174,26 +196,39 @@ pub async fn crawl(
                 isolate_main_content(&page).await;
             }
 
-            // Export page to PDF (30-second timeout)
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                page.pdf(PrintToPdfParams::default()),
-            )
-            .await
-            {
-                Ok(Ok(bytes)) => pdf_bytes = Some(bytes),
-                Ok(Err(e)) => {
-                    eprintln!("PDF failed for {url} (attempt {attempt}): {e}");
-                    if attempt < 2 {
-                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                        continue 'retry;
+            if config.output_format == OutputFormat::Markdown {
+                match page_to_markdown(&page, &url, config.include_images).await {
+                    Some(md) => pdf_bytes = Some(md.into_bytes()),
+                    None => {
+                        eprintln!("Markdown extraction failed for {url} (attempt {attempt})");
+                        if attempt < 2 {
+                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                            continue 'retry;
+                        }
                     }
                 }
-                Err(_) => {
-                    eprintln!("PDF timeout for {url} (attempt {attempt})");
-                    if attempt < 2 {
-                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                        continue 'retry;
+            } else {
+            // Export page to PDF (30-second timeout)
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    page.pdf(PrintToPdfParams::default()),
+                )
+                .await
+                {
+                    Ok(Ok(bytes)) => pdf_bytes = Some(bytes),
+                    Ok(Err(e)) => {
+                        eprintln!("PDF failed for {url} (attempt {attempt}): {e}");
+                        if attempt < 2 {
+                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                            continue 'retry;
+                        }
+                    }
+                    Err(_) => {
+                        eprintln!("PDF timeout for {url} (attempt {attempt})");
+                        if attempt < 2 {
+                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                            continue 'retry;
+                        }
                     }
                 }
             }
@@ -554,7 +589,8 @@ async fn isolate_main_content(page: &chromiumoxide::Page) {
             // ...and class-matched widgets, unless they wrap real content (e.g. accordions
             // are styled "filter-item-container").
             main.querySelectorAll(
-                '[class*="filter"], [class*="breadcrumb"], [class*="feedback"], ' +
+                '[class*="filter-section"], [class*="filter-bar"], [class*="filter-panel"], ' +
+                '[class*="breadcrumb"], [class*="feedback"], ' +
                 '[class*="related"], [class*="share"]'
             ).forEach(el => {
                 if (!el.querySelector('article, h2, h3, table') && el.tagName !== 'ARTICLE') {
@@ -571,6 +607,21 @@ async fn isolate_main_content(page: &chromiumoxide::Page) {
     "#;
     let _ = page.evaluate(script).await;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+}
+
+const MARKDOWN_JS: &str = include_str!("markdown.js");
+
+/// Convert the page's (main) content to Markdown: text, links and image links.
+/// Prefixed with the source URL. Returns `None` if the page could not be evaluated.
+async fn page_to_markdown(page: &chromiumoxide::Page, url: &str, include_images: bool) -> Option<String> {
+    let script = MARKDOWN_JS.replace("__INCLUDE_IMAGES__", if include_images { "true" } else { "false" });
+    let raw = page.evaluate(script).await.ok()?.into_value::<String>().ok()?;
+    #[derive(serde::Deserialize)]
+    struct Out {
+        md: String,
+    }
+    let out: Out = serde_json::from_str(&raw).ok()?;
+    Some(format!("{}\n\nKälla: <{}>", out.md, url))
 }
 
 /// Same-host http(s) links on the page. With `main_only`, only links in the main
@@ -791,6 +842,8 @@ mod tests {
             sitemap_only: false,
             main_only: true,
             document_patterns: vec![],
+            output_format: OutputFormat::Pdf,
+            include_images: true,
         };
         let (tx, mut rx) = mpsc::unbounded_channel::<Progress>();
         let cancel = CancellationToken::new();
@@ -812,5 +865,36 @@ mod tests {
         let found = watcher.await.unwrap();
         println!("found after 3 pages: {found}");
         assert!(found > 150, "expected link-following on top of sitemap, got {found}");
+    }
+
+    #[tokio::test]
+    #[ignore = "network + local Chromium (set S2P_CHROME)"]
+    async fn markdown_from_rjl_page() {
+        let chrome = std::env::var("S2P_CHROME").expect("S2P_CHROME");
+        let cfg = CrawlConfig {
+            url: String::new(),
+            output_path: "/dev/null".into(),
+            max_depth: None,
+            chromium_path: chrome.into(),
+            blocked_patterns: vec![],
+            user_data_dir: None,
+            url_list: Some(vec![
+                "https://folkhalsaochsjukvard.rjl.se/vardstod/fakta---allmant-kliniskt-kunskapsstod/akuta-tillstand/".into(),
+            ]),
+            use_sitemap: false,
+            sitemap_only: false,
+            main_only: true,
+            document_patterns: vec![],
+            output_format: OutputFormat::Markdown,
+            include_images: true,
+        };
+        let (tx, _rx) = mpsc::unbounded_channel::<Progress>();
+        let pages = crawl(cfg, tx, CancellationToken::new()).await.unwrap();
+        let md = String::from_utf8(pages[0].clone()).unwrap();
+        std::fs::write(std::env::var("S2P_MD_OUT").unwrap_or("/tmp/s2p_test.md".into()), &md).unwrap();
+        assert!(md.starts_with("# Akuta tillstånd"), "{}", &md[..200.min(md.len())]);
+        assert!(md.contains("](https://"));
+        assert!(!md.contains("Filtrera"), "page chrome leaked");
+        assert!(md.contains("Källa: <https://folkhalsaochsjukvard"));
     }
 }

@@ -28,6 +28,9 @@ const docPatternsInput  = document.getElementById('doc-patterns');
 const previewLinksBtn   = document.getElementById('preview-links-btn');
 const previewStatus     = document.getElementById('preview-status');
 const linkGroupsEl      = document.getElementById('link-groups');
+const formatSelect       = document.getElementById('output-format');
+const includeImagesCb   = document.getElementById('include-images');
+const includeImagesRow  = document.getElementById('include-images-row');
 const blockedInput      = document.getElementById('blocked-patterns');
 
 const modeCrawlBtn  = document.getElementById('mode-crawl');
@@ -198,8 +201,21 @@ function updateStartBtn() {
 
 urlInput.addEventListener('input', updateStartBtn);
 
+const EXT = { pdf: '.pdf', markdown: '.md' };
+formatSelect.addEventListener('change', () => {
+  includeImagesRow.classList.toggle('hidden', formatSelect.value !== 'markdown');
+  // Keep the chosen file name, just swap the extension
+  const p = outputInput.value;
+  const other = formatSelect.value === 'markdown' ? EXT.pdf : EXT.markdown;
+  if (p.toLowerCase().endsWith(other)) {
+    outputInput.value = p.slice(0, -other.length) + EXT[formatSelect.value];
+    lastOutputPath = outputInput.value;
+  }
+  updateStartBtn();
+});
+
 browseBtn.addEventListener('click', async () => {
-  const path = await invoke('choose_save_path');
+  const path = await invoke('choose_save_path', { format: formatSelect.value });
   if (path) {
     outputInput.value = path;
     lastOutputPath = path;
@@ -270,6 +286,8 @@ async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList 
   const sitemapOnly = useSitemap && sitemapOnlyCb.checked;
   const mainOnly = mainOnlyCb.checked;
   const documentPatterns = followDocsCb.checked ? readDocPatterns() : [];
+  const outputFormat = formatSelect.value;
+  const includeImages = includeImagesCb.checked;
   showPhase('progress');
   progressBar.style.width = '0%';
   progressLabel.textContent = urlList ? 'Bearbetar URL-lista…' : 'Startar krypning…';
@@ -285,8 +303,10 @@ async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList 
   unlisten.push(await listen('crawl-complete', ({ payload: info }) => {
     cleanup();
     showPhase('done');
-    const mb = (info.fileSize / 1024 / 1024).toFixed(1);
-    doneMessage.textContent = `✓ PDF sparad\n${info.total} sidor · ${mb} MB\n${info.outputPath}`;
+    const size = info.fileSize >= 1048576
+      ? (info.fileSize / 1048576).toFixed(1) + ' MB'
+      : Math.max(1, Math.round(info.fileSize / 1024)) + ' kB';
+    doneMessage.textContent = `✓ ${formatSelect.value === 'markdown' ? 'Markdown-fil' : 'PDF'} sparad\n${info.total} sidor · ${size}\n${info.outputPath}`;
     lastOutputPath = info.outputPath;
   }));
 
@@ -297,7 +317,7 @@ async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList 
   }));
 
   try {
-    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns, urlList, useSitemap, sitemapOnly, mainOnly, documentPatterns });
+    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns, urlList, useSitemap, sitemapOnly, mainOnly, documentPatterns, outputFormat, includeImages });
   } catch (err) {
     cleanup();
     showPhase('input');
