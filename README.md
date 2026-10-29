@@ -35,15 +35,20 @@ Välj var PDF:en ska sparas och klicka **Starta**.
 
 ### Hur undersidor hittas
 
-Som standard används **sitemap.xml**: appen läser `robots.txt`/`sitemap.xml` (även sitemap-index) och tar bara sidor **under startsidans sökväg**. Den följer alltså inte menyer och länkar på sidorna. Saknas sitemap faller appen tillbaka på vanlig länkföljning (styrs då av *Maxdjup*, som annars ignoreras). Länkar till andra webbplatser följs aldrig.
+Appen följer länkar från startsidan ner till **Maxdjup** nivåer, men bara till sidor **under startsidans sökväg** (länkar till andra webbplatser följs aldrig). Är *Bara huvudinnehåll* på följs bara länkar i sidans huvudinnehåll, inte i menyer och sidopaneler.
+
+Sidor som bara skiljer sig åt i region- eller spårningsparametrar (`globalregion`, `utm_*`, `accordionAnchor`, `pageId`, `blockId`, `gclid`, `fbclid`) räknas som samma sida.
+
+Som standard används även **sitemap.xml** som komplement: appen läser `robots.txt`/`sitemap.xml` (även sitemap-index) och lägger sidorna under startsidans sökväg till som extra startpunkter. Sitemaps är ofta ofullständiga, så länkföljningen körs ändå ovanpå. Med *Bara sitemap* hämtas enbart sitemapens sidor och Maxdjup ignoreras.
 
 ### Avancerat
 
 | Alternativ | Standard | Beskrivning |
 |---|---|---|
 | Blockera URL-mönster | – | Ett mönster per rad, `*` = wildcard, t.ex. `*/quiz/*`. Matchande sidor hoppas över. |
-| Hitta undersidor via sitemap.xml | på | Se ovan. |
-| Bara huvudinnehåll | på | Döljer menyer, sidopaneler, filter, feedback och knappar. Fäller ut dragspel (`aria-expanded`, `<details>`) så att texten kommer med. |
+| Använd sitemap.xml | på | Lägger till sidor från sitemapen som startpunkter. Se ovan. |
+| Bara sitemap | av | Följ inga länkar, hämta bara sitemapens sidor (Maxdjup ignoreras). |
+| Bara huvudinnehåll | på | Döljer menyer, sidopaneler, filter, feedback och knappar, och följer bara länkar i huvudinnehållet. Fäller ut dragspel (`aria-expanded`, `<details>`) så att texten kommer med. |
 | Ta med dokumentsidor | av | Hämtar även interna länkar i sidans huvudinnehåll som matchar mönstren nedan. Dokumentsidor följs inte vidare. |
 | Dokumentlänk-mönster | `*/dokument/*` | Ett mönster per rad, `*` = wildcard, skiftlägesokänsligt. Gäller bara länkar på samma sajt. |
 | Förhandsgranska länkar | – | Skannar startsidan och ett urval sitemap-sidor, grupperar interna länkar per sökvägsdel (t.ex. `*/dokument/*`, 46 länkar) och låter dig kryssa i vilka som ska med. Valen skrivs in i mönsterfältet, som du även kan redigera för hand. Tar ca 30–60 sekunder. |
@@ -73,7 +78,7 @@ cargo tauri build    # release-bygge
 Windows-releaser byggs automatiskt av GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) när en tagg `v*` pushas (tar ca 20 minuter).
 
 ```bash
-git tag v0.3.1 && git push origin v0.3.1
+git tag v0.3.2 && git push origin v0.3.2
 ```
 
 Tester:

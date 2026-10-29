@@ -22,9 +22,11 @@ pub struct CrawlConfig {
     pub user_data_dir: Option<PathBuf>,
     /// If set, crawl exactly these URLs in order — no BFS link discovery.
     pub url_list: Option<Vec<String>>,
-    /// Discover subpages via sitemap.xml (under the start URL's path) instead of
-    /// following links. Falls back to link-following if no sitemap is usable.
+    /// Use sitemap.xml (pages under the start URL's path) to find subpages.
     pub use_sitemap: bool,
+    /// With `use_sitemap`: crawl only the sitemap pages and do not follow links.
+    /// Otherwise the sitemap pages are added as extra start points to link-following.
+    pub sitemap_only: bool,
     /// Strip menus, sidebars, filters etc. and keep only the main content.
     pub main_only: bool,
     /// Glob-style patterns (`*` wildcard, case-insensitive). Same-host links in each
@@ -50,29 +52,33 @@ pub async fn crawl(
     cancel: CancellationToken,
 ) -> Result<Vec<Vec<u8>>> {
     let mut config = config;
+    // Pages from sitemap.xml under the start path. Sitemaps are often incomplete, so
+    // unless `sitemap_only` is set they only add start points to link-following.
+    let mut sitemap_seeds: Vec<String> = Vec::new();
     if config.use_sitemap && config.url_list.is_none() {
         match crate::sitemap::resolve(&config.url).await {
             Ok(list) if !list.is_empty() => {
-                let list: Vec<String> = list
+                sitemap_seeds = list
                     .into_iter()
                     .filter(|u| !is_blocked(u, &config.blocked_patterns))
                     .collect();
-                eprintln!("Sitemap: {} pages under {}", list.len(), config.url);
-                config.url_list = Some(list);
+                eprintln!("Sitemap: {} pages under {}", sitemap_seeds.len(), config.url);
+                if config.sitemap_only {
+                    config.url_list = Some(std::mem::take(&mut sitemap_seeds));
+                }
             }
-            Ok(_) => eprintln!("Sitemap: nothing usable, falling back to link-following"),
-            Err(e) => eprintln!("Sitemap failed ({e}), falling back to link-following"),
+            Ok(_) => eprintln!("Sitemap: nothing usable, using link-following only"),
+            Err(e) => eprintln!("Sitemap failed ({e}), using link-following only"),
         }
     }
 
     let mut browser = launch_browser(&config.chromium_path, config.user_data_dir.as_deref()).await?;
 
-    let (start_url, prefix) = if config.url_list.is_none() {
-        let su = Url::parse(&config.url).context("Invalid start URL")?;
-        let pf = build_prefix(&config.url);
-        (su, pf)
+    let prefix = if config.url_list.is_none() {
+        Url::parse(&config.url).context("Invalid start URL")?;
+        build_prefix(&config.url)
     } else {
-        (Url::parse("http://localhost").unwrap(), String::new())
+        String::new()
     };
 
     let mut queue: VecDeque<(String, u32)> = VecDeque::new();
@@ -88,6 +94,11 @@ pub async fn crawl(
     } else {
         queue.push_back((config.url.clone(), 0));
         visited.insert(normalize_url(&config.url));
+        for seed in &sitemap_seeds {
+            if visited.insert(normalize_url(seed)) {
+                queue.push_back((strip_ignored_params(seed), 0));
+            }
+        }
     }
 
     let mut pdf_pages: Vec<Vec<u8>> = Vec::new();
@@ -192,7 +203,7 @@ pub async fn crawl(
                 && depth != DOC_DEPTH
                 && config.max_depth.map_or(true, |max| depth < max);
             if should_follow {
-                page_links = extract_links(&page, &start_url, &prefix).await;
+                page_links = extract_links(&page, &prefix, config.main_only).await;
             }
             if !config.document_patterns.is_empty() && depth != DOC_DEPTH {
                 doc_links = extract_document_links(&page, &config.document_patterns).await;
@@ -308,10 +319,39 @@ fn build_prefix(url: &str) -> String {
     format!("{trimmed}/")
 }
 
+/// Query parameters that never change which page is shown (region switchers, tracking,
+/// in-page anchors). Links differing only in these are the same page.
+fn is_ignored_param(key: &str) -> bool {
+    let k = key.to_lowercase();
+    k.starts_with("utm_")
+        || matches!(
+            k.as_str(),
+            "globalregion" | "accordionanchor" | "pageid" | "blockid" | "gclid" | "fbclid" | "mc_cid" | "mc_eid"
+        )
+}
+
+/// Drop the fragment and ignored query parameters, keeping everything else as-is.
+fn strip_ignored_params(url: &str) -> String {
+    let Ok(mut u) = Url::parse(url) else {
+        return url.split('#').next().unwrap_or(url).to_string();
+    };
+    u.set_fragment(None);
+    let kept: Vec<(String, String)> = u
+        .query_pairs()
+        .filter(|(k, _)| !is_ignored_param(k))
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    if kept.is_empty() {
+        u.set_query(None);
+    } else {
+        u.query_pairs_mut().clear().extend_pairs(kept);
+    }
+    u.to_string()
+}
+
 fn normalize_url(url: &str) -> String {
-    // Strip fragment and trailing slash for deduplication
-    let without_fragment = url.split('#').next().unwrap_or(url);
-    without_fragment.trim_end_matches('/').to_lowercase()
+    // Strip fragment, ignored params and trailing slash for deduplication
+    strip_ignored_params(url).trim_end_matches('/').to_lowercase()
 }
 
 async fn wait_for_ready(page: &chromiumoxide::Page) {
@@ -533,26 +573,39 @@ async fn isolate_main_content(page: &chromiumoxide::Page) {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 }
 
-/// All same-host http(s) links inside the main content (not sidebars/menus/headers/footers).
-async fn extract_main_links(page: &chromiumoxide::Page) -> Vec<String> {
-    let script = r#"
-        (function() {
-            const root = document.querySelector('main, [role="main"], #main, #content') || document.body;
+/// Same-host http(s) links on the page. With `main_only`, only links in the main
+/// content: skips `aside`, `nav`, `footer` and page-level `header` (menus, sidebars).
+async fn collect_links(page: &chromiumoxide::Page, main_only: bool) -> Vec<String> {
+    let script = format!(
+        r#"
+        (function() {{
+            const mainOnly = {main_only};
+            const root = (mainOnly && document.querySelector('main, [role="main"], #main, #content')) || document.body;
             return JSON.stringify([...root.querySelectorAll('a[href]')]
-                .filter(a => !a.closest('aside, nav, header, footer'))
+                .filter(a => {{
+                    if (!mainOnly) return true;
+                    const bad = a.closest('aside, nav, header, footer');
+                    // A <header> inside an article/main is content (e.g. accordion heading)
+                    return !bad || (bad.tagName === 'HEADER' && bad.closest('main, article'));
+                }})
                 .map(a => a.href)
-                .filter(h => { try {
+                .filter(h => {{ try {{
                     const u = new URL(h);
                     return (u.protocol === 'http:' || u.protocol === 'https:') && u.host === location.host;
-                } catch (e) { return false; } }));
-        })()
-    "#;
+                }} catch (e) {{ return false; }} }}));
+        }})()
+        "#
+    );
     page.evaluate(script)
         .await
         .ok()
         .and_then(|v| v.into_value::<String>().ok())
         .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
         .unwrap_or_default()
+}
+
+async fn extract_main_links(page: &chromiumoxide::Page) -> Vec<String> {
+    collect_links(page, true).await
 }
 
 /// Main-content links matching one of the document `patterns` (case-insensitive globs).
@@ -670,56 +723,35 @@ pub async fn preview_links(
     Ok(out)
 }
 
-async fn extract_links(
-    page: &chromiumoxide::Page,
-    start_url: &Url,
-    prefix: &str,
-) -> Vec<String> {
-    let elements = match page.find_elements("a[href]").await {
-        Ok(els) => els,
-        Err(_) => return vec![],
-    };
-
-    let mut links = Vec::new();
-    for el in &elements {
-        let href = match el.attribute("href").await {
-            Ok(Some(h)) if !h.is_empty() => h,
-            _ => continue,
-        };
-
-        // Resolve relative URLs
-        let absolute = match start_url.join(&href) {
-            Ok(u) => u,
-            Err(_) => continue,
-        };
-
-        let abs_str = absolute.as_str();
-
-        // Must be http/https
-        if !matches!(absolute.scheme(), "http" | "https") {
-            continue;
-        }
-
-        // Must match the prefix (same domain + path prefix)
-        if abs_str.starts_with(prefix) || abs_str == prefix.trim_end_matches('/') {
-            // Strip fragment before adding
-            let clean = match absolute.fragment() {
-                Some(_) => {
-                    let mut u = absolute.clone();
-                    u.set_fragment(None);
-                    u.to_string()
-                }
-                None => abs_str.to_owned(),
-            };
-            links.push(clean);
-        }
-    }
-    links
+/// Links to follow: same host, under `prefix`, with fragment and ignored params removed.
+async fn extract_links(page: &chromiumoxide::Page, prefix: &str, main_only: bool) -> Vec<String> {
+    let prefix_lc = prefix.to_lowercase();
+    let bare = prefix_lc.trim_end_matches('/');
+    collect_links(page, main_only)
+        .await
+        .into_iter()
+        .map(|l| strip_ignored_params(&l))
+        .filter(|l| {
+            let lc = l.to_lowercase();
+            lc.starts_with(&prefix_lc) || lc.trim_end_matches('/') == bare
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn region_and_tracking_params_do_not_make_new_pages() {
+        let a = normalize_url("https://x.se/Sjukdom/?globalregion=10");
+        let b = normalize_url("https://x.se/sjukdom/?globalregion=20&utm_source=a#top");
+        assert_eq!(a, b);
+        assert_eq!(a, "https://x.se/sjukdom");
+        // Meaningful params are kept
+        assert_ne!(normalize_url("https://x.se/s?id=1"), normalize_url("https://x.se/s?id=2"));
+        assert_eq!(strip_ignored_params("https://x.se/s?id=1&globalregion=3"), "https://x.se/s?id=1");
+    }
 
     #[test]
     fn document_patterns_match_case_insensitively() {
@@ -741,5 +773,44 @@ mod tests {
             .unwrap();
         println!("{groups:#?}");
         assert!(groups.iter().any(|g| g.pattern == "*/dokument/*"));
+    }
+
+    #[tokio::test]
+    #[ignore = "network + local Chromium (set S2P_CHROME)"]
+    async fn discovers_more_than_sitemap_on_1177() {
+        let chrome = std::env::var("S2P_CHROME").expect("S2P_CHROME");
+        let cfg = CrawlConfig {
+            url: "https://www.1177.se/Jonkopings-lan/sjukdomar--besvar/".into(),
+            output_path: "/dev/null".into(),
+            max_depth: Some(3),
+            chromium_path: chrome.into(),
+            blocked_patterns: vec![],
+            user_data_dir: None,
+            url_list: None,
+            use_sitemap: true,
+            sitemap_only: false,
+            main_only: true,
+            document_patterns: vec![],
+        };
+        let (tx, mut rx) = mpsc::unbounded_channel::<Progress>();
+        let cancel = CancellationToken::new();
+        let c2 = cancel.clone();
+        let watcher = tokio::spawn(async move {
+            let mut max_found = 0;
+            let mut seen = 0;
+            while let Some(p) = rx.recv().await {
+                max_found = max_found.max(p.found);
+                seen += 1;
+                eprintln!("{} (found {})", p.current_url, p.found);
+                if seen >= 3 {
+                    c2.cancel();
+                }
+            }
+            max_found
+        });
+        let _ = crawl(cfg, tx, cancel).await;
+        let found = watcher.await.unwrap();
+        println!("found after 3 pages: {found}");
+        assert!(found > 150, "expected link-following on top of sitemap, got {found}");
     }
 }

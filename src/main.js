@@ -20,6 +20,7 @@ const startBtn          = document.getElementById('start-btn');
 const inputError        = document.getElementById('input-error');
 const manualCookiesCb   = document.getElementById('manual-cookies');
 const useSitemapCb      = document.getElementById('use-sitemap');
+const sitemapOnlyCb     = document.getElementById('sitemap-only');
 const mainOnlyCb        = document.getElementById('main-only');
 const followDocsCb      = document.getElementById('follow-docs');
 const docOptions        = document.getElementById('doc-options');
@@ -115,6 +116,10 @@ function readDocPatterns() {
 function writeDocPatterns(lines) {
   docPatternsInput.value = lines.join('\n');
 }
+
+useSitemapCb.addEventListener('change', () => {
+  sitemapOnlyCb.disabled = !useSitemapCb.checked;
+});
 
 followDocsCb.addEventListener('change', () => {
   docOptions.classList.toggle('hidden', !followDocsCb.checked);
@@ -262,6 +267,7 @@ prepareCancelBtn.addEventListener('click', async () => {
 // ── Start the actual crawl ────────────────────────────────────────────────────
 async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList = null }) {
   const useSitemap = useSitemapCb.checked;
+  const sitemapOnly = useSitemap && sitemapOnlyCb.checked;
   const mainOnly = mainOnlyCb.checked;
   const documentPatterns = followDocsCb.checked ? readDocPatterns() : [];
   showPhase('progress');
@@ -291,7 +297,7 @@ async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList 
   }));
 
   try {
-    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns, urlList, useSitemap, mainOnly, documentPatterns });
+    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns, urlList, useSitemap, sitemapOnly, mainOnly, documentPatterns });
   } catch (err) {
     cleanup();
     showPhase('input');

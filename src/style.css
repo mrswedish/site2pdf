@@ -286,3 +286,5 @@ textarea:focus { border-color: var(--accent); }
 }
 
 .done-actions button { flex: 1; }
+
+.sub-option { margin-left: 22px; margin-top: 6px; }

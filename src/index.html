@@ -74,11 +74,15 @@
         ></textarea>
         <label class="checkbox-row">
           <input type="checkbox" id="use-sitemap" checked />
-          <span>Hitta undersidor via sitemap.xml <span class="hint">(följer inte länkar på sidorna; faller tillbaka på länkföljning om sitemap saknas)</span></span>
+          <span>Använd sitemap.xml <span class="hint">(lägger till sidor som sitemapen känner till; länkar följs ändå enligt Maxdjup)</span></span>
+        </label>
+        <label class="checkbox-row sub-option">
+          <input type="checkbox" id="sitemap-only" />
+          <span>Bara sitemap <span class="hint">(följ inga länkar &ndash; Maxdjup ignoreras)</span></span>
         </label>
         <label class="checkbox-row">
           <input type="checkbox" id="main-only" checked />
-          <span>Bara huvudinnehåll <span class="hint">(utan menyer, sidopaneler och filter; fäller ut dragspel)</span></span>
+          <span>Bara huvudinnehåll <span class="hint">(utan menyer, sidopaneler och filter; följer bara länkar i huvudinnehållet; fäller ut dragspel)</span></span>
         </label>
         <label class="checkbox-row">
           <input type="checkbox" id="follow-docs" />

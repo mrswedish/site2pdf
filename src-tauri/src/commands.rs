@@ -193,6 +193,7 @@ pub async fn start_crawl(
     blocked_patterns: Vec<String>,
     url_list: Option<Vec<String>>,
     use_sitemap: Option<bool>,
+    sitemap_only: Option<bool>,
     main_only: Option<bool>,
     document_patterns: Option<Vec<String>>,
 ) -> Result<(), String> {
@@ -220,6 +221,7 @@ pub async fn start_crawl(
         user_data_dir,
         url_list,
         use_sitemap: use_sitemap.unwrap_or(false),
+        sitemap_only: sitemap_only.unwrap_or(false),
         main_only: main_only.unwrap_or(false),
         document_patterns: document_patterns.unwrap_or_default(),
     };
