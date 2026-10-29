@@ -268,10 +268,39 @@ async fn wait_for_ready(page: &chromiumoxide::Page) {
 }
 
 async fn dismiss_cookie_banners(page: &chromiumoxide::Page) {
-    // Step 1: try to click accept buttons.
-    // Tries known Cookiebot/OneTrust IDs first, then falls back to text matching.
+    // Consent platforms (Cookie Information, Cookiebot, ...) inject their banner
+    // asynchronously after load, so wait briefly for it before trying to accept.
+    for _ in 0..12 {
+        let present = page
+            .evaluate(
+                r#"(function() {
+                    return !!(window.CookieInformation || window.Cookiebot || window.OneTrust
+                        || window.UC_UI || window.klaro
+                        || document.getElementById('coiOverlay')
+                        || document.getElementById('CybotCookiebotDialog')
+                        || document.getElementById('onetrust-banner-sdk')
+                        || document.getElementById('usercentrics-root'));
+                })()"#,
+            )
+            .await
+            .ok()
+            .and_then(|v| v.into_value::<bool>().ok())
+            .unwrap_or(false);
+        if present {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+
+    // Step 1: accept via the platform's JS API or accept buttons.
+    // Tries known platform APIs/IDs first, then falls back to text matching.
     let click_script = r#"
         (function() {
+            // --- Cookie Information (used by e.g. rjl.se) ---
+            if (window.CookieInformation && typeof CookieInformation.submitAllCategories === 'function') {
+                try { CookieInformation.submitAllCategories(); return 'cookieinformation-api'; } catch (e) {}
+            }
+
             // --- Cookiebot (used by e.g. folkhalsomyndigheten.se) ---
             const cybotAccept = document.getElementById(
                 'CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll'
@@ -281,6 +310,11 @@ async fn dismiss_cookie_banners(page: &chromiumoxide::Page) {
             // --- OneTrust ---
             const otAccept = document.getElementById('onetrust-accept-btn-handler');
             if (otAccept) { otAccept.click(); return 'onetrust-id'; }
+
+            // --- Usercentrics ---
+            if (window.UC_UI && typeof UC_UI.acceptAllConsents === 'function') {
+                try { UC_UI.acceptAllConsents(); return 'usercentrics-api'; } catch (e) {}
+            }
 
             // --- Generic Cookiebot JS API ---
             if (typeof Cookiebot !== 'undefined' && Cookiebot.hide) {
@@ -332,6 +366,10 @@ async fn dismiss_cookie_banners(page: &chromiumoxide::Page) {
                 .cookie-law-info-bar, #cookie-popup, .cookie-popup,
                 /* GDPR Cookie Compliance */
                 .moove-gdpr-info-bar, .moove-gdpr-infobar-allow-all,
+                /* Cookie Information (rjl.se etc.) */
+                #coiOverlay, #cookie-information-template-wrapper,
+                #coi-banner-wrapper, .coi-banner__wrapper,
+                [id^="coi-"], [class^="coi-banner"],
                 /* Usercentrics */
                 #usercentrics-root,
                 /* Generic attribute selectors */

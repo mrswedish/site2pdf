@@ -149,7 +149,11 @@ startBtn.addEventListener('click', async () => {
       await invoke('open_preview_browser', { url });
       showPhase('prepare');
     } catch (err) {
-      showError(String(err));
+      // Preview browser could not start (e.g. blocked on a locked-down work PC):
+      // fall back to automatic cookie handling instead of failing.
+      console.warn('Preview browser failed, falling back to automatic cookie handling:', err);
+      pendingCrawlParams = null;
+      beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList: null });
     }
     return;
   }
