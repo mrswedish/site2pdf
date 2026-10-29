@@ -27,7 +27,13 @@ pub struct CrawlConfig {
     pub use_sitemap: bool,
     /// Strip menus, sidebars, filters etc. and keep only the main content.
     pub main_only: bool,
+    /// Also fetch same-host links to document pages (path contains `/dokument/`)
+    /// found in each page's main content. Documents are never crawled further.
+    pub follow_documents: bool,
 }
+
+/// Depth marker for document pages fetched via `follow_documents`.
+const DOC_DEPTH: u32 = u32::MAX - 1;
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -139,6 +145,7 @@ pub async fn crawl(
         // Try up to 2 times: once normally, once after a longer back-off
         let mut pdf_bytes: Option<Vec<u8>> = None;
         let mut page_links: Vec<String> = Vec::new();
+        let mut doc_links: Vec<String> = Vec::new();
         let mut attempt = 0u8;
 
         'retry: loop {
@@ -208,9 +215,13 @@ pub async fn crawl(
 
             // Extract links if we haven't hit max depth (never in url_list mode)
             let should_follow = config.url_list.is_none()
+                && depth != DOC_DEPTH
                 && config.max_depth.map_or(true, |max| depth < max);
             if should_follow {
                 page_links = extract_links(&page, &start_url, &prefix).await;
+            }
+            if config.follow_documents && depth != DOC_DEPTH {
+                doc_links = extract_document_links(&page).await;
             }
 
             break 'retry;
@@ -225,6 +236,15 @@ pub async fn crawl(
             if !visited.contains(&normalized) && !is_blocked(&link, &config.blocked_patterns) {
                 visited.insert(normalized);
                 queue.push_back((link, depth + 1));
+            }
+        }
+
+        for link in doc_links {
+            // Same document is linked with varying query strings (pageId/blockId):
+            // dedupe on host + path only.
+            let key = normalize_url(link.split('?').next().unwrap_or(&link));
+            if !is_blocked(&link, &config.blocked_patterns) && visited.insert(key) {
+                queue.push_back((link, DOC_DEPTH));
             }
         }
 
@@ -495,6 +515,28 @@ async fn isolate_main_content(page: &chromiumoxide::Page) {
     "#;
     let _ = page.evaluate(script).await;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+}
+
+/// Same-host links to `/dokument/` pages inside the main content (not sidebars/menus).
+async fn extract_document_links(page: &chromiumoxide::Page) -> Vec<String> {
+    let script = r#"
+        (function() {
+            const root = document.querySelector('main, [role="main"], #main, #content') || document.body;
+            return JSON.stringify([...root.querySelectorAll('a[href]')]
+                .filter(a => !a.closest('aside, nav, header, footer'))
+                .map(a => a.href)
+                .filter(h => { try {
+                    const u = new URL(h);
+                    return u.host === location.host && u.pathname.toLowerCase().includes('/dokument/');
+                } catch (e) { return false; } }));
+        })()
+    "#;
+    page.evaluate(script)
+        .await
+        .ok()
+        .and_then(|v| v.into_value::<String>().ok())
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
 }
 
 async fn extract_links(

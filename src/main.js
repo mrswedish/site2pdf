@@ -21,6 +21,7 @@ const inputError        = document.getElementById('input-error');
 const manualCookiesCb   = document.getElementById('manual-cookies');
 const useSitemapCb      = document.getElementById('use-sitemap');
 const mainOnlyCb        = document.getElementById('main-only');
+const followDocsCb      = document.getElementById('follow-docs');
 const blockedInput      = document.getElementById('blocked-patterns');
 
 const modeCrawlBtn  = document.getElementById('mode-crawl');
@@ -180,6 +181,7 @@ prepareCancelBtn.addEventListener('click', async () => {
 async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList = null }) {
   const useSitemap = useSitemapCb.checked;
   const mainOnly = mainOnlyCb.checked;
+  const followDocuments = followDocsCb.checked;
   showPhase('progress');
   progressBar.style.width = '0%';
   progressLabel.textContent = urlList ? 'Bearbetar URL-lista…' : 'Startar krypning…';
@@ -207,7 +209,7 @@ async function beginCrawl({ url, outputPath, maxDepth, blockedPatterns, urlList 
   }));
 
   try {
-    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns, urlList, useSitemap, mainOnly });
+    await invoke('start_crawl', { url, outputPath, maxDepth, blockedPatterns, urlList, useSitemap, mainOnly, followDocuments });
   } catch (err) {
     cleanup();
     showPhase('input');

@@ -1,6 +1,6 @@
 [package]
 name = "site2pdf"
-version = "0.2.2"
+version = "0.2.3"
 description = "Portable Windows app to crawl websites and export to PDF"
 authors = []
 license = "MIT"
