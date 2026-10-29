@@ -88,7 +88,7 @@ cargo tauri build    # release-bygge
 Windows-releaser byggs automatiskt av GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) när en tagg `v*` pushas (tar ca 20 minuter).
 
 ```bash
-git tag v0.4.0 && git push origin v0.4.0
+git tag v0.4.1 && git push origin v0.4.1
 ```
 
 Tester:

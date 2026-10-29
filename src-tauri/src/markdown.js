@@ -29,6 +29,16 @@
         return out;
     }
 
+    // Emphasis around inline text, keeping boundary spaces outside the markers.
+    // Skipped when the content holds block structure (e.g. a heading inside <strong>).
+    function wrapInline(node, mark) {
+        const raw = children(node);
+        const t = raw.trim();
+        if (!t) return raw ? ' ' : '';
+        if (t.includes('\n') || /^#{1,6} /.test(t)) return raw;
+        return (/^\s/.test(raw) ? ' ' : '') + mark + t + mark + (/\s$/.test(raw) ? ' ' : '');
+    }
+
     function list(el, ordered) {
         let i = 0, out = '\n\n';
         for (const li of el.children) {
@@ -67,8 +77,8 @@
             case 'P': return '\n\n' + children(node).trim() + '\n\n';
             case 'BR': return '  \n';
             case 'HR': return '\n\n---\n\n';
-            case 'STRONG': case 'B': { const t = children(node).trim(); return t ? '**' + t + '**' : ''; }
-            case 'EM': case 'I': { const t = children(node).trim(); return t ? '*' + t + '*' : ''; }
+            case 'STRONG': case 'B': return wrapInline(node, '**');
+            case 'EM': case 'I': return wrapInline(node, '*');
             case 'CODE': return node.closest('pre') ? node.textContent : '`' + node.textContent + '`';
             case 'PRE':
                 return '\n\n```\n' + node.textContent.replace(/\n+$/, '')
@@ -80,7 +90,12 @@
             case 'TABLE': return table(node);
             case 'DT': return '\n\n**' + oneLine(children(node)) + '**\n';
             case 'DD': return children(node).trim() + '\n';
-            case 'SUMMARY': return '\n\n**' + oneLine(children(node)) + '**\n\n';
+            case 'SUMMARY': {
+                const t = children(node).trim();
+                if (!t) return '';
+                // <summary><h2>..</h2></summary>: the heading already is the title
+                return /^#{1,6} /m.test(t) ? '\n\n' + t + '\n\n' : '\n\n**' + oneLine(t) + '**\n\n';
+            }
             case 'IMG': {
                 if (!INCLUDE_IMAGES) return '';
                 const src = node.currentSrc || node.src || '';
@@ -88,14 +103,16 @@
                 return '![' + oneLine(node.alt || '').replace(/[\[\]]/g, '') + '](' + abs(src) + ')';
             }
             case 'A': {
-                const inner = oneLine(children(node));
+                const raw = children(node);
+                const inner = oneLine(raw);
                 const href = node.getAttribute('href') || '';
                 if (!inner) return '';
                 if (!href || href.startsWith('#') || /^javascript:/i.test(href)) return inner;
                 const u = abs(href);
                 const link = /^(https?:|mailto:|tel:)/i.test(u) ? '[' + inner + '](' + u + ')' : inner;
                 // Links laid out as blocks (flex/block "link lists") get their own paragraph
-                return blockish(node) ? '\n\n' + link + '\n\n' : link;
+                if (blockish(node)) return '\n\n' + link + '\n\n';
+                return (/^\s/.test(raw) ? ' ' : '') + link + (/\s$/.test(raw) ? ' ' : '');
             }
             case 'LI': case 'TR': case 'DL': case 'DETAILS':
                 return '\n' + children(node) + '\n';
@@ -105,7 +122,8 @@
     }
 
     let md = conv(root);
-    md = md.replace(/[ \t]+\n/g, '\n')
+    md = md.replace(/^[ \t\u0001]+$/gm, '')    // whitespace-only lines (e.g. inside list items)
+           .replace(/[ \t]+\n/g, '\n')
            .replace(/^[ \t]+/gm, '')        // stray indentation would turn text into code blocks
            .replace(/\u0001/g, ' ')
            .replace(/\n{3,}/g, '\n\n')

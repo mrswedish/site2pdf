@@ -897,4 +897,31 @@ mod tests {
         assert!(!md.contains("Filtrera"), "page chrome leaked");
         assert!(md.contains("Källa: <https://folkhalsaochsjukvard"));
     }
+
+    /// Manual check: S2P_URLS="url1,url2" S2P_MD_OUT=file.md cargo test markdown_from_env -- --ignored
+    #[tokio::test]
+    #[ignore = "manual: network + local Chromium"]
+    async fn markdown_from_env() {
+        let chrome = std::env::var("S2P_CHROME").expect("S2P_CHROME");
+        let urls: Vec<String> = std::env::var("S2P_URLS").expect("S2P_URLS").split(',').map(|s| s.trim().to_string()).collect();
+        let cfg = CrawlConfig {
+            url: String::new(),
+            output_path: "/dev/null".into(),
+            max_depth: None,
+            chromium_path: chrome.into(),
+            blocked_patterns: vec![],
+            user_data_dir: None,
+            url_list: Some(urls),
+            use_sitemap: false,
+            sitemap_only: false,
+            main_only: true,
+            document_patterns: vec![],
+            output_format: OutputFormat::Markdown,
+            include_images: true,
+        };
+        let (tx, _rx) = mpsc::unbounded_channel::<Progress>();
+        let pages = crawl(cfg, tx, CancellationToken::new()).await.unwrap();
+        let parts: Vec<String> = pages.iter().map(|b| String::from_utf8_lossy(b).into_owned()).collect();
+        std::fs::write(std::env::var("S2P_MD_OUT").unwrap(), parts.join(MD_PAGE_SEPARATOR)).unwrap();
+    }
 }
